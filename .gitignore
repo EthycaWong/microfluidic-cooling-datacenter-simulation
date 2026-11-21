@@ -221,3 +221,9 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Simulation build and outputs
+build/
+results/
+.DS_Store
+compile_commands.json

@@ -1,0 +1,12 @@
+{
+  // Rack transient: servers alternate between 20% and 100% activity every 10 s (phase-shifted),
+  // pump holds the hottest chip at 85 C. Used for "mfsim run".
+  "level": "rack",
+  "gpu": { "power": { "map": { "pattern": "hotspot", "size_x": 0.5, "size_y": 0.5, "core_share": 0.5 } } },
+  "rack": { "pump_mode": "peak-temperature", "target_peak_C": 85 },
+  "workload": { "type": "square", "low": 0.2, "high": 1.0, "period_s": 20, "duty": 0.5 },
+  "server_workloads": [
+    { "phase_s": 0 }, { "phase_s": 2.5 }, { "phase_s": 5 }, { "phase_s": 7.5 },
+    { "phase_s": 10 }, { "phase_s": 12.5 }, { "phase_s": 15 }, { "phase_s": 17.5 }
+  ]
+}

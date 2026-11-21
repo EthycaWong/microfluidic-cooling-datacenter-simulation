@@ -1,0 +1,54 @@
+{
+  // One microchannel GPU: fixed 0.5 L/min, 35 C inlet, full power.
+  // Keys carry their units. Values marked ASSUMED are study assumptions, see docs/parameters.md.
+  "level": "chip",
+  "fluid": { "viscosity_scale": 1.0 },
+
+  "gpu": {
+    "cooling": "microchannel",
+    "die":      { "lx_mm": 20, "ly_mm": 20, "thickness_mm": 0.8 },
+    "channels": { "count": 50, "width_um": 200, "depth_um": 500, "length_mm": 20, "rib_um": 200,
+                  "k_inlet": 0.5, "k_outlet": 1.0, "hagenbach": true },
+    "grid":     { "nx": 10, "ny": 10 },
+    "power":    { "idle_W": 60, "full_W": 300,
+                  // ASSUMED hotspot: central core block (50% x 50% of the area) dissipates 50% of the power
+                  "map": { "pattern": "hotspot", "center_x": 0.5, "center_y": 0.5,
+                           "size_x": 0.5, "size_y": 0.5, "core_share": 0.5 } },
+    "silicon":  { "k300_W_per_mK": 148, "k_exponent": 1.3 }
+  },
+
+  "cpu": {
+    "cooling": "cold-plate",
+    "die":   { "lx_mm": 25, "ly_mm": 25, "thickness_mm": 0.8 },
+    "grid":  { "nx": 10, "ny": 10 },
+    "power": { "idle_W": 50, "full_W": 200,
+               "map": { "pattern": "hotspot", "center_x": 0.5, "center_y": 0.5,
+                        "size_x": 0.6, "size_y": 0.6, "core_share": 0.6 } },
+    "cold_plate": { "tim_m2K_per_W": 8e-6, "base_mm": 3, "hA_ref_W_per_K": 25, "q_ref_lpm": 0.5,
+                    "hA_exponent": 0.5, "fluid_volume_ml": 3, "dp_ref_kPa": 4, "laminar_fraction": 0.6 }
+  },
+
+  "air": { "idle_W": 120, "full_W": 200, "room_C": 27, "air_dT_K": 12, "fan_dp_ref_Pa": 150,
+           "flow_ref_m3s": 0.0143, "fan_eta": 0.35, "ua_ref_W_per_K": 10, "heat_capacity_J_per_K": 2000 },
+
+  "server": { "hose_d_mm": 6, "hose_length_m": 0.6, "hose_K": 3, "qd_dp_ref_kPa": 3, "qd_q_ref_lpm": 1.5,
+              "auto_balance": true, "branch_target_lpm": 0.5, "rig_total_flow_lpm": 1.5 },
+
+  "rack": {
+    "servers": 8, "server_U": 4, "first_server_U": 7,
+    "manifold_d_mm": 20, "manifold_K_per_tap": 0.5, "connect_length_m": 0.5, "connect_K": 1.5,
+    "layout": "direct-return",
+    // CDU placeholder until the CDU heat-exchanger milestone (ASSUMED curves)
+    "hx_dp_ref_kPa": 25, "hx_q_ref_lpm": 12, "hx_laminar_fraction": 0.5,
+    "filter_dp_ref_kPa": 8, "filter_q_ref_lpm": 12, "filter_laminar_fraction": 0.3,
+    "reference_pressure_kPa": 150,
+    "pump": { "shutoff_kPa": 100, "max_flow_lpm": 20, "bep_flow_lpm": 12, "eta_max": 0.5, "eta_motor": 0.9,
+              "min_speed": 0.05, "max_speed": 2.0 },
+    "pump_mode": "fixed-flow", "target_flow_lpm": 12, "pump_speed": 1.0,
+    "target_peak_C": 85, "pi_kp": 0.02, "pi_ki": 0.1,
+    "supply_C": 35, "hydraulic_interval_s": 0.05
+  },
+
+  "chip_rig": { "flow_lpm": 0.5, "inlet_C": 35 },
+  "workload": { "type": "constant", "u": 1.0 }
+}

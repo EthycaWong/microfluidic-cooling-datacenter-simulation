@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 860" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <rect width="1000" height="860" fill="#ffffff"/>
+  <defs>
+    <marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f2937"/></marker>
+  </defs>
+  <text x="30" y="38" font-size="22" font-weight="bold" fill="#111827">42U rack and closed equipment loop (simulated)</text>
+  <text x="30" y="62" fill="#4b5563">Pump → supply manifold → 8 servers in parallel → return manifold → CDU (placeholder) → pump. Rear view, direct-return layout.</text>
+
+  <!-- rack elevation; 1U = 15 px, U1 at bottom y=760 -->
+  <rect x="120" y="120" width="300" height="640" fill="none" stroke="#374151" stroke-width="3"/>
+  <!-- spare U41-42 -->
+  <rect x="130" y="122" width="280" height="28" fill="#f3f4f6" stroke="#9ca3af"/><text x="140" y="141" font-size="12">U41–42 spare / blank</text>
+  <!-- network U39-40 -->
+  <rect x="130" y="152" width="280" height="28" fill="#e5e7eb" stroke="#6b7280"/><text x="140" y="171" font-size="12">U39–40 network switches</text>
+  <!-- servers U7-38, each 4U=60px, top server 8 at U35-38 -->
+  <g font-size="13">
+    <rect x="130" y="182" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="215">Server 8  (U35–38)</text>
+    <rect x="130" y="242" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="275">Server 7  (U31–34)</text>
+    <rect x="130" y="302" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="335">Server 6  (U27–30)</text>
+    <rect x="130" y="362" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="395">Server 5  (U23–26)</text>
+    <rect x="130" y="422" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="455">Server 4  (U19–22)</text>
+    <rect x="130" y="482" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="515">Server 3  (U15–18)</text>
+    <rect x="130" y="542" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="575">Server 2  (U11–14)</text>
+    <rect x="130" y="602" width="280" height="58" fill="#ecfdf5" stroke="#047857"/><text x="140" y="635">Server 1  (U7–10)</text>
+    <rect x="130" y="662" width="280" height="96" fill="#e0f2fe" stroke="#0369a1"/>
+    <text x="140" y="690" font-weight="bold">U1–6  CDU + pump</text>
+    <text x="140" y="710" font-size="12">placeholder HX (25 kPa @ 12 L/min)</text>
+    <text x="140" y="726" font-size="12">filter (8 kPa), sealed expansion vessel</text>
+    <text x="140" y="742" font-size="12">pump: H0 100 kPa, 20 L/min max</text>
+  </g>
+  <text x="120" y="840" font-size="12" fill="#374151">8 × 4U = 32U servers; 10U for CDU/pump (6U), network (2U), spare (2U)</text>
+
+  <!-- manifolds -->
+  <rect x="470" y="200" width="16" height="520" fill="#bfdbfe" stroke="#1d4ed8"/>
+  <rect x="540" y="200" width="16" height="520" fill="#fde68a" stroke="#b45309"/>
+  <text x="440" y="190" fill="#1d4ed8" font-weight="bold" font-size="13">supply</text>
+  <text x="530" y="190" fill="#b45309" font-weight="bold" font-size="13">return</text>
+  <g stroke-width="2">
+    <line x1="410" y1="205" x2="470" y2="205" stroke="#1d4ed8"/><line x1="410" y1="225" x2="540" y2="225" stroke="#b45309"/>
+    <line x1="410" y1="265" x2="470" y2="265" stroke="#1d4ed8"/><line x1="410" y1="285" x2="540" y2="285" stroke="#b45309"/>
+    <line x1="410" y1="325" x2="470" y2="325" stroke="#1d4ed8"/><line x1="410" y1="345" x2="540" y2="345" stroke="#b45309"/>
+    <line x1="410" y1="385" x2="470" y2="385" stroke="#1d4ed8"/><line x1="410" y1="405" x2="540" y2="405" stroke="#b45309"/>
+    <line x1="410" y1="445" x2="470" y2="445" stroke="#1d4ed8"/><line x1="410" y1="465" x2="540" y2="465" stroke="#b45309"/>
+    <line x1="410" y1="505" x2="470" y2="505" stroke="#1d4ed8"/><line x1="410" y1="525" x2="540" y2="525" stroke="#b45309"/>
+    <line x1="410" y1="565" x2="470" y2="565" stroke="#1d4ed8"/><line x1="410" y1="585" x2="540" y2="585" stroke="#b45309"/>
+    <line x1="410" y1="625" x2="470" y2="625" stroke="#1d4ed8"/><line x1="410" y1="645" x2="540" y2="645" stroke="#b45309"/>
+  </g>
+  <line x1="478" y1="740" x2="478" y2="230" stroke="#1d4ed8" stroke-width="2" marker-end="url(#f)"/>
+  <line x1="548" y1="230" x2="548" y2="740" stroke="#b45309" stroke-width="2" marker-end="url(#f)"/>
+  <path d="M478,720 L478,795 L300,795 L300,762" stroke="#1d4ed8" stroke-width="3" fill="none"/>
+  <path d="M548,720 L548,810 L240,810 L240,762" stroke="#b45309" stroke-width="3" fill="none"/>
+
+  <!-- notes -->
+  <g transform="translate(600,120)" font-size="13" fill="#111827">
+    <text x="0" y="0" font-weight="bold" font-size="15">Modelled in the rack network</text>
+    <text x="0" y="24">• 20 mm manifolds, Churchill friction + tee losses per tap</text>
+    <text x="0" y="44">• per server: 2 QDs + 3 parallel branches (see server.svg)</text>
+    <text x="0" y="64">• pump curve H = s²H0 − bQ², affinity laws, η(Q, s)</text>
+    <text x="0" y="84">• pump modes: fixed speed, fixed flow, PI on peak T</text>
+    <text x="0" y="104">• direct return (shown) or reverse return</text>
+    <text x="0" y="124">• hydrostatic ρgz: cancels around the closed loop</text>
+    <text x="0" y="144">• viscosity μ(T) of each element from its temperature</text>
+
+    <text x="0" y="190" font-weight="bold" font-size="15">Boundary conditions this milestone</text>
+    <text x="0" y="214">• supply fixed at 35 °C (CDU/dry cooler model is next)</text>
+    <text x="0" y="234">• CDU = fixed resistance curves (labelled placeholder)</text>
+    <text x="0" y="254">• expansion vessel fixes 150 kPa at pump suction</text>
+    <text x="0" y="274">• room air 27 °C for the 1.6 kW air-cooled load</text>
+
+    <text x="0" y="320" font-weight="bold" font-size="15">Consistency check (from the proposal)</text>
+    <text x="0" y="344">8 × 800 W = 6.4 kW to liquid, 12 L/min ≈ 0.199 kg/s</text>
+    <text x="0" y="364">ΔT = Q / (ṁ c_p) ≈ 7.7 K → mixed return ≈ 42.7 °C</text>
+    <text x="0" y="384">model: 42.70 °C (unit-tested)</text>
+
+    <text x="0" y="430" font-weight="bold" font-size="15">Not yet modelled</text>
+    <text x="0" y="454">facility loop, dry cooler, outdoor climate, CDU HX</text>
+    <text x="0" y="474">effectiveness, expansion-vessel dynamics, glycol data</text>
+  </g>
+</svg>

@@ -1,0 +1,110 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 720" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <rect width="1060" height="720" fill="#ffffff"/>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1f2937"/>
+    </marker>
+    <marker id="flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <pattern id="si" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="8" height="8" fill="#d1d5db"/><line x1="0" y1="0" x2="0" y2="8" stroke="#9ca3af" stroke-width="2"/>
+    </pattern>
+  </defs>
+  <text x="30" y="38" font-size="22" font-weight="bold" fill="#111827">One GPU die with etched silicon microchannels (simulation input)</text>
+  <text x="30" y="62" fill="#4b5563">Left: cross-section across the channels (5 of 50 shown, to scale vertically). Right: top view with the 10 × 10 thermal grid.</text>
+
+  <!-- ===== Cross-section ===== -->
+  <g transform="translate(40,110)">
+    <text x="0" y="-4" font-weight="bold" fill="#111827">A. Cross-section A–A (across flow)</text>
+    <!-- lid -->
+    <rect x="0" y="30" width="420" height="24" fill="#e0f2fe" stroke="#0369a1"/>
+    <text x="0" y="24" fill="#0369a1" font-size="12">bonded cover (top wall adiabatic)</text>
+    <!-- silicon with channels: total 0.8 mm = 200 px, channel depth 500 um = 125 px, floor 300 um = 75 px -->
+    <rect x="0" y="54" width="420" height="200" fill="url(#si)" stroke="#374151"/>
+    <!-- channels: width 200 um = 42 px, pitch 400 um = 84 px -->
+    <g fill="#93c5fd" stroke="#1d4ed8">
+      <rect x="21" y="54" width="42" height="125"/>
+      <rect x="105" y="54" width="42" height="125"/>
+      <rect x="189" y="54" width="42" height="125"/>
+      <rect x="273" y="54" width="42" height="125"/>
+      <rect x="357" y="54" width="42" height="125"/>
+    </g>
+    <!-- heat source -->
+    <rect x="0" y="254" width="420" height="10" fill="#ef4444"/>
+    <g stroke="#ef4444" stroke-width="2" marker-end="url(#arr)">
+      <line x1="60" y1="300" x2="60" y2="268"/><line x1="160" y1="300" x2="160" y2="268"/>
+      <line x1="260" y1="300" x2="260" y2="268"/><line x1="360" y1="300" x2="360" y2="268"/>
+    </g>
+    <text x="0" y="322" fill="#b91c1c">heated active face: 300 W over 20 × 20 mm (P(u) = P_idle + u(P_full − P_idle))</text>
+    <!-- dimensions -->
+    <g stroke="#1f2937" fill="none" stroke-width="1.2">
+      <line x1="21" y1="200" x2="63" y2="200" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <line x1="63" y1="215" x2="105" y2="215" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <line x1="470" y1="54" x2="470" y2="179" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <line x1="470" y1="179" x2="470" y2="254" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <line x1="540" y1="54" x2="540" y2="254" marker-start="url(#arr)" marker-end="url(#arr)"/>
+      <line x1="421" y1="54" x2="545" y2="54" stroke-dasharray="3 3"/>
+      <line x1="400" y1="179" x2="475" y2="179" stroke-dasharray="3 3"/>
+      <line x1="421" y1="254" x2="545" y2="254" stroke-dasharray="3 3"/>
+    </g>
+    <text x="18" y="196" font-size="12">200 µm channel</text>
+    <text x="60" y="232" font-size="12">200 µm rib (fin)</text>
+    <text x="478" y="122" font-size="12">500 µm</text><text x="478" y="136" font-size="12">etched depth</text>
+    <text x="478" y="212" font-size="12">300 µm</text><text x="478" y="226" font-size="12">floor</text>
+    <text x="548" y="150" font-size="12">0.8 mm</text><text x="548" y="164" font-size="12">silicon</text>
+    <text x="0" y="350" fill="#1d4ed8">● coolant flows into the page (single-phase water, 35 °C inlet)</text>
+    <!-- thermal path -->
+    <g transform="translate(0,380)">
+      <text x="0" y="0" font-weight="bold" fill="#111827">Thermal path per grid cell (RC network)</text>
+      <rect x="0" y="14" width="120" height="34" rx="6" fill="#fee2e2" stroke="#b91c1c"/><text x="12" y="36">silicon node</text>
+      <line x1="120" y1="31" x2="190" y2="31" stroke="#111827" stroke-width="2"/>
+      <text x="124" y="24" font-size="12">floor t/kA</text>
+      <line x1="190" y1="31" x2="270" y2="31" stroke="#111827" stroke-width="2" stroke-dasharray="6 3"/>
+      <text x="190" y="24" font-size="12">h·(w + 2dη)·Δx</text>
+      <rect x="270" y="14" width="130" height="34" rx="6" fill="#dbeafe" stroke="#1d4ed8"/><text x="282" y="36">coolant node</text>
+      <text x="0" y="72" font-size="12" fill="#374151">Silicon nodes: capacitance + conduction to 4 neighbours (ribs conduct along flow, only the floor across).</text>
+      <text x="0" y="90" font-size="12" fill="#374151">Coolant nodes: capacitance + upwind advection from the upstream cell, so coolant warms along the channel.</text>
+      <text x="0" y="108" font-size="12" fill="#374151">h from 3-wall Nu (Shah &amp; London) × thermal-entrance factor; fin efficiency η = tanh(mH)/mH.</text>
+    </g>
+  </g>
+
+  <!-- ===== Top view ===== -->
+  <g transform="translate(700,110)">
+    <text x="0" y="0" font-weight="bold" fill="#111827">B. Top view: 20 × 20 mm, 10 × 10 grid</text>
+    <rect x="-30" y="30" width="22" height="300" fill="#bfdbfe" stroke="#1d4ed8"/>
+    <rect x="308" y="30" width="22" height="300" fill="#fde68a" stroke="#b45309"/>
+    <text x="-38" y="350" font-size="12" fill="#1d4ed8">inlet header</text>
+    <text x="270" y="350" font-size="12" fill="#b45309">outlet header</text>
+    <rect x="0" y="30" width="300" height="300" fill="#f3f4f6" stroke="#111827" stroke-width="1.5"/>
+    <!-- hotspot block (assumed): central 50% x 50%, 50% of power -->
+    <rect x="75" y="105" width="150" height="150" fill="#fecaca" stroke="#dc2626" stroke-dasharray="5 3"/>
+    <g stroke="#9ca3af" stroke-width="0.8">
+      <line x1="30" y1="30" x2="30" y2="330"/><line x1="60" y1="30" x2="60" y2="330"/><line x1="90" y1="30" x2="90" y2="330"/>
+      <line x1="120" y1="30" x2="120" y2="330"/><line x1="150" y1="30" x2="150" y2="330"/><line x1="180" y1="30" x2="180" y2="330"/>
+      <line x1="210" y1="30" x2="210" y2="330"/><line x1="240" y1="30" x2="240" y2="330"/><line x1="270" y1="30" x2="270" y2="330"/>
+      <line x1="0" y1="60" x2="300" y2="60"/><line x1="0" y1="90" x2="300" y2="90"/><line x1="0" y1="120" x2="300" y2="120"/>
+      <line x1="0" y1="150" x2="300" y2="150"/><line x1="0" y1="180" x2="300" y2="180"/><line x1="0" y1="210" x2="300" y2="210"/>
+      <line x1="0" y1="240" x2="300" y2="240"/><line x1="0" y1="270" x2="300" y2="270"/><line x1="0" y1="300" x2="300" y2="300"/>
+    </g>
+    <g stroke="#2563eb" stroke-width="2.5" marker-end="url(#flow)">
+      <line x1="10" y1="45" x2="290" y2="45"/><line x1="10" y1="135" x2="290" y2="135"/>
+      <line x1="10" y1="225" x2="290" y2="225"/><line x1="10" y1="315" x2="290" y2="315"/>
+    </g>
+    <text x="80" y="185" fill="#b91c1c" font-size="12">assumed hotspot</text>
+    <text x="80" y="200" fill="#b91c1c" font-size="12">50% of power in 25% of area</text>
+    <text x="0" y="372" font-size="12" fill="#374151">x (i = 0…9): along the channels, flow direction</text>
+    <text x="0" y="390" font-size="12" fill="#374151">y (j = 0…9): across; each column carries 5 of the 50 channels</text>
+    <text x="0" y="408" font-size="12" fill="#374151">Section A–A is a cut across y</text>
+  </g>
+
+  <!-- ===== Boundary conditions ===== -->
+  <g transform="translate(700,560)">
+    <text x="0" y="0" font-weight="bold" fill="#111827">Chip-level boundary conditions</text>
+    <text x="0" y="22" font-size="13">• inlet 35 °C, 0.5 L/min water (Re ≈ 660, laminar)</text>
+    <text x="0" y="42" font-size="13">• heat input on the active face; cover and sides adiabatic</text>
+    <text x="0" y="62" font-size="13">• flow shared equally by the 50 channels</text>
+    <text x="0" y="82" font-size="13">• peak-temperature limit 85 °C (study assumption)</text>
+    <text x="0" y="102" font-size="13">• resolution check: 5, 10, 20, 40 cells per side</text>
+  </g>
+</svg>

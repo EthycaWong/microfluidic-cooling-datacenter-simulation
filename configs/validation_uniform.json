@@ -1,0 +1,8 @@
+{
+  // Hand-calculation check: one GPU, UNIFORM 300 W heating, 0.5 L/min water at 35 C.
+  // Expected: Re ~ 660, channel dp ~ 12-15 kPa, outlet ~ 43.7 C, peak ~ 65-70 C.
+  "level": "chip",
+  "gpu": { "power": { "idle_W": 60, "full_W": 300, "map": { "pattern": "uniform" } } },
+  "chip_rig": { "flow_lpm": 0.5, "inlet_C": 35 },
+  "workload": { "type": "constant", "u": 1.0 }
+}

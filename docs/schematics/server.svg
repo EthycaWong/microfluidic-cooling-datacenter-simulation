@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 600" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <rect width="1000" height="600" fill="#ffffff"/>
+  <defs>
+    <marker id="f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#1f2937"/></marker>
+  </defs>
+  <text x="30" y="38" font-size="22" font-weight="bold" fill="#111827">One 4U server: three parallel cooling branches</text>
+  <text x="30" y="62" fill="#4b5563">Branch flows come from equal pressure drop across the branches (hydraulic network), not from assuming 0.5 L/min each.</text>
+
+  <!-- supply / return headers -->
+  <rect x="60" y="110" width="26" height="330" rx="6" fill="#bfdbfe" stroke="#1d4ed8"/>
+  <rect x="864" y="110" width="26" height="330" rx="6" fill="#fde68a" stroke="#b45309"/>
+  <text x="20" y="100" fill="#1d4ed8" font-weight="bold">Server supply</text>
+  <text x="820" y="100" fill="#b45309" font-weight="bold">Server return</text>
+  <!-- QDs -->
+  <rect x="4" y="262" width="40" height="26" rx="4" fill="#e5e7eb" stroke="#374151"/><text x="8" y="280" font-size="12">QD</text>
+  <rect x="906" y="262" width="40" height="26" rx="4" fill="#e5e7eb" stroke="#374151"/><text x="912" y="280" font-size="12">QD</text>
+  <line x1="44" y1="275" x2="60" y2="275" stroke="#1d4ed8" stroke-width="3"/>
+  <line x1="890" y1="275" x2="906" y2="275" stroke="#b45309" stroke-width="3"/>
+  <text x="4" y="312" font-size="11" fill="#374151">from rack supply</text><text x="4" y="326" font-size="11" fill="#374151">manifold</text>
+  <text x="880" y="312" font-size="11" fill="#374151">to rack return</text><text x="880" y="326" font-size="11" fill="#374151">manifold</text>
+
+  <!-- branch template: hose -> component -> valve -> hose -->
+  <g font-size="13">
+    <!-- GPU1 -->
+    <line x1="86" y1="160" x2="864" y2="160" stroke="#6b7280" stroke-width="3" marker-end="url(#f)"/>
+    <rect x="200" y="132" width="300" height="56" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+    <text x="214" y="155" font-weight="bold">GPU 1 — silicon microchannels</text>
+    <text x="214" y="175" font-size="12">300 W, 50 × 200×500 µm channels, ~13 kPa</text>
+    <rect x="580" y="140" width="110" height="40" rx="6" fill="#f3f4f6" stroke="#374151"/>
+    <text x="590" y="158" font-size="12">balancing valve</text><text x="590" y="173" font-size="12">(sized: 0 kPa)</text>
+    <!-- GPU2 -->
+    <line x1="86" y1="275" x2="864" y2="275" stroke="#6b7280" stroke-width="3" marker-end="url(#f)"/>
+    <rect x="200" y="247" width="300" height="56" rx="8" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+    <text x="214" y="270" font-weight="bold">GPU 2 — silicon microchannels</text>
+    <text x="214" y="290" font-size="12">300 W, identical to GPU 1</text>
+    <rect x="580" y="255" width="110" height="40" rx="6" fill="#f3f4f6" stroke="#374151"/>
+    <text x="590" y="273" font-size="12">balancing valve</text><text x="590" y="288" font-size="12">(sized: 0 kPa)</text>
+    <!-- CPU -->
+    <line x1="86" y1="390" x2="864" y2="390" stroke="#6b7280" stroke-width="3" marker-end="url(#f)"/>
+    <rect x="200" y="362" width="300" height="56" rx="8" fill="#fff7ed" stroke="#c2410c" stroke-width="1.5"/>
+    <text x="214" y="385" font-weight="bold">CPU — conventional cold plate</text>
+    <text x="214" y="405" font-size="12">200 W, TIM + copper base, ~4 kPa</text>
+    <rect x="580" y="370" width="110" height="40" rx="6" fill="#f3f4f6" stroke="#374151"/>
+    <text x="590" y="388" font-size="12">balancing valve</text><text x="590" y="403" font-size="12">(sized: ≈9.5 kPa)</text>
+    <text x="100" y="152" font-size="11" fill="#374151">hose</text>
+    <text x="720" y="152" font-size="11" fill="#374151">hose</text>
+  </g>
+  <text x="700" y="215" font-size="12" fill="#047857">≈0.5 L/min</text>
+  <text x="700" y="330" font-size="12" fill="#047857">≈0.5 L/min</text>
+  <text x="700" y="445" font-size="12" fill="#c2410c">≈0.5 L/min</text>
+
+  <!-- air group -->
+  <rect x="200" y="470" width="470" height="50" rx="8" fill="#f5f3ff" stroke="#6d28d9" stroke-dasharray="6 3"/>
+  <text x="214" y="492" font-weight="bold" fill="#5b21b6">Memory + storage + other electronics — 200 W, air cooled</text>
+  <text x="214" y="510" font-size="12" fill="#5b21b6">fans hold a 12 K air rise; heat goes to room air (27 °C), not the coolant</text>
+
+  <g transform="translate(30,548)" font-size="12" fill="#111827">
+    <text x="0" y="0" font-weight="bold">Boundary conditions (server rig, temporary):</text>
+    <text x="0" y="18">supply fixed at 35 °C and total 1.5 L/min. In the rack, the pump curve and manifolds set the flow instead. Valves are sized once so each branch carries 0.5 L/min at 35 °C.</text>
+    <text x="0" y="36">Without valves the low-resistance CPU branch takes more flow and the GPUs get less (unit test "Without balancing valves...").</text>
+  </g>
+</svg>
