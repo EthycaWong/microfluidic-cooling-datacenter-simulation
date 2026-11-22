@@ -227,3 +227,7 @@ build/
 results/
 .DS_Store
 compile_commands.json
+
+# ML job
+.venv/
+data/

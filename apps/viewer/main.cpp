@@ -1,6 +1,8 @@
 // mfsim_viewer: interactive 3D view of the simulated rack, server and chip (raylib + raygui).
 //
 //   mfsim_viewer [--config configs/rack_baseline.json] [--scene rack|server|chip] [--server 1-8] [--chip 0-2]
+//                [--plant on|off] [--outdoor C] [--loads 1,1,...] [--coolant PG25]
+//                [--job live|replay] [--job-servers 2|4|8] [--live-trace F] [--replay-trace F]
 //                [--screenshot out.png --frames 90]   (render, save a screenshot, exit)
 #include "Scenes.hpp"
 #include "UiPanel.hpp"
@@ -116,6 +118,13 @@ int main(int argc, char** argv) {
         }
     }
     for (int k = 0; k < 8; ++k) app.manual[k]->set(app.s.load[k]);
+    app.liveTrace = arg(argc, argv, "--live-trace", app.liveTrace.c_str());
+    app.replayTrace = arg(argc, argv, "--replay-trace", app.replayTrace.c_str());
+    const std::string jobArg = arg(argc, argv, "--job", "");          // live | replay
+    const std::string jobSrv = arg(argc, argv, "--job-servers", "2");
+    app.s.jobServers = jobSrv == "8" ? 2 : jobSrv == "4" ? 1 : 0;
+    if (jobArg == "live") app.s.profile = 3;
+    if (jobArg == "replay") app.s.profile = 4;
     applyProfile(app);
     frameScene(app.s);
     dc.solveSteady(); // start from a converged state
@@ -176,7 +185,8 @@ int main(int argc, char** argv) {
         }
         if (app.s.pumpMode == 2) app.s.pumpSpeed = static_cast<float>(rack.pumpSpeed());
         if (rack.time() - lastSample >= 0.1) {
-            app.s.history.push_back({rack.time(), rack.hotspot().t, rack.pumpPower(), rack.totalFlowLpm(), rack.returnT()});
+            app.s.history.push_back({rack.time(), rack.hotspot().t, rack.pumpPower(), rack.totalFlowLpm(), rack.returnT(),
+                                     rack.server(0).activity()});
             while (!app.s.history.empty() && app.s.history.front().t < rack.time() - 62.0) app.s.history.pop_front();
             lastSample = rack.time();
         }

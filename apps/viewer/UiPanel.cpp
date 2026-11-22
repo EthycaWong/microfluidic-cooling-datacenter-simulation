@@ -47,13 +47,32 @@ const char* chipName(int b) { return b == 0 ? "GPU 1" : b == 1 ? "GPU 2" : "CPU"
 
 } // namespace
 
+int jobServerCount(const App& app) { return app.s.jobServers == 0 ? 2 : app.s.jobServers == 1 ? 4 : 8; }
+
 void applyProfile(App& app) {
     mf::Rack& r = *app.rack;
+    app.job.reset();
+    app.jobMessage.clear();
+    if (app.s.profile == 3) {
+        app.job = std::make_shared<mf::JobTraceWorkload>(app.liveTrace, 0.0, 1.0, true);
+    } else if (app.s.profile == 4) {
+        try {
+            app.job = std::make_shared<mf::JobTraceWorkload>(app.replayTrace, r.time() + 3.0, 1.0, false);
+        } catch (const std::exception&) {
+            app.jobMessage = "no recorded trace: run ml/train_mnist.py first";
+            app.s.profile = 0;
+        }
+    }
+    auto idle = std::make_shared<mf::ConstantWorkload>(0.0);
     for (int k = 0; k < r.serverCount(); ++k) {
         switch (app.s.profile) {
         case 0: r.setWorkload(k, app.manual[k]); break;
         case 1: r.setWorkload(k, std::make_shared<mf::SquareWorkload>(0.2, 1.0, 20.0, 0.5, 0.0)); break;
-        default: r.setWorkload(k, std::make_shared<mf::SquareWorkload>(0.2, 1.0, 20.0, 0.5, 2.5 * k)); break;
+        case 2: r.setWorkload(k, std::make_shared<mf::SquareWorkload>(0.2, 1.0, 20.0, 0.5, 2.5 * k)); break;
+        default: // ML job on the lowest N servers (data-parallel replicas); the rest wait idle, on demand
+            if (k < jobServerCount(app)) r.setWorkload(k, app.job);
+            else r.setWorkload(k, idle);
+            break;
         }
     }
 }
@@ -97,7 +116,8 @@ void drawControlPanel(App& app, Rectangle a) {
     // ---- workload ----
     heading(s, "Workload (activity u)", x, y, w);
     int prof = s.profile;
-    GuiComboBox({x, y, w, 26}, "Manual sliders;Square wave, in sync;Square wave, staggered", &prof);
+    GuiComboBox({x, y, w, 26},
+                "Manual sliders;Square wave, in sync;Square wave, staggered;Live ML job (PyTorch);Replay recorded ML job", &prof);
     if (prof != s.profile) { s.profile = prof; applyProfile(app); }
     y += 34;
     if (s.profile == 0) {
@@ -116,6 +136,22 @@ void drawControlPanel(App& app, Rectangle a) {
         }
         y += 4 * 21 + 2;
         for (int k = 0; k < 8; ++k) app.manual[k]->set(s.load[k]);
+    } else if (s.profile >= 3) {
+        drawText(s, "Job servers", x, y + 4, 15, kInk);
+        int js = s.jobServers;
+        GuiToggleGroup({x + 112, y, (w - 112 - 8) / 3, 24}, "2;4;8", &js);
+        if (js != s.jobServers) { s.jobServers = js; applyProfile(app); }
+        y += 30;
+        if (app.job) {
+            const mf::TracePoint tp = app.job->at(r.time());
+            drawText(s, "ML job: " + tp.phase + f1("   u = %.2f", tp.u), x, y, 15, Color{120, 230, 150, 255});
+            y += 20;
+            drawText(s, f1("%.0f images trained", tp.trainSamples) + f1(", %.0f digits read", tp.inferSamples), x, y, 14, kDim);
+            y += 20;
+        } else {
+            drawText(s, app.jobMessage, x, y, 14, Color{255, 140, 120, 255});
+            y += 22;
+        }
     } else {
         drawText(s, "u alternates 20% / 100% every 10 s", x, y, 14, kDim);
         y += 22;
@@ -208,7 +244,8 @@ void drawReadouts(App& app, Rectangle a) {
     float y = a.y + 10;
     const mf::Hotspot h = r.hotspot();
     const mf::LiquidLedger l = r.ledger();
-    drawText(s, f1("t = %.1f s", r.time()) + (s.paused ? "  (paused)" : ""), x, y, 17, kInk);
+    drawText(s, f1("t = %.1f s", r.time()) + (s.paused ? "  (paused)" : "") +
+                    (app.job ? (app.job->live() ? "   LIVE ML JOB" : "   REPLAY ML JOB") : ""), x, y, 17, kInk);
     y += 26;
     row(s, "IT power", f1("%.0f W", r.itPower()), x, y, w);
     row(s, "  liquid (GPUs + CPUs)", f1("%.0f W", l.powerIn), x, y, w);

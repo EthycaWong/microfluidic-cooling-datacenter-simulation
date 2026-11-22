@@ -3,6 +3,8 @@
 #include "config/Config.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 
 using namespace mf;
 
@@ -103,4 +105,60 @@ TEST_CASE("Config JSON overrides defaults with unit conversion") {
     CHECK(c.rack.pump.shutoffHeadPa == doctest::Approx(120e3));
     CHECK(makeWorkload(c.workload)->u(1.0) == doctest::Approx(1.0));
     CHECK(makeWorkload(c.workload)->u(3.0) == doctest::Approx(0.2));
+}
+
+TEST_CASE("Job trace replay: idle before and after the job, phases, offset and time scale") {
+    const std::string path = "job_trace_test.csv";
+    {
+        std::ofstream f(path);
+        f << "t_s,u,phase,train_samples,infer_samples\n0.1,0.0,setup,0,0\n0.2,0.8,train,128,0\n0.3,0.6,train,256,0\n"
+             "0.4,0.1,scan,256,32\n";
+    }
+    JobTraceWorkload w(path, 10.0, 2.0); // starts at t = 10 s, stretched x2
+    CHECK(w.u(5.0) == 0.0);
+    CHECK(w.at(5.0).phase == "waiting");
+    CHECK(w.u(10.0 + 2.0 * 0.15) == doctest::Approx(0.8)); // trace t 0.15 -> window ending at 0.2
+    CHECK(w.at(10.0 + 2.0 * 0.25).phase == "train");
+    CHECK(w.at(10.0 + 2.0 * 0.35).inferSamples == 32);
+    CHECK(w.durationSim() == doctest::Approx(0.8));
+    CHECK(w.u(20.0) == 0.0);
+    CHECK(w.at(20.0).phase == "done");
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Live job trace follows a file as it grows") {
+    const std::string path = "job_trace_live_test.csv";
+    std::remove(path.c_str());
+    JobTraceWorkload w(path, 0.0, 1.0, true);
+    CHECK(w.at(0.0).phase == "waiting"); // no file yet: servers wait on demand
+    {
+        std::ofstream f(path);
+        f << "t_s,u,phase,train_samples,infer_samples\n0.1,0.7,train,128,0\n";
+    }
+    w.refresh();
+    CHECK(w.u(123.0) == doctest::Approx(0.7)); // live: newest sample, whatever the simulation time
+    {
+        std::ofstream f(path, std::ios::app);
+        f << "0.2,0.2,eval,128,0\n";
+    }
+    w.refresh();
+    CHECK(w.at(0.0).phase == "eval");
+    CHECK(w.size() == 2);
+    std::remove(path.c_str());
+}
+
+TEST_CASE("Feedforward pump control limits overshoot on an on-demand load step") {
+    SimConfig c = defaultConfig();
+    c.server.gpu.power.map.pattern = "hotspot";
+    c.rack.pumpMode = PumpMode::PeakTemperature;
+    c.rack.targetPeakC = 80.0;
+    Rack r(c.rack, c.server, water());
+    r.setAllWorkloads(std::make_shared<StepWorkload>(0.0, 1.0, 5.0)); // idle, then a job arrives at t = 5 s
+    r.solveSteady();                                                   // idle steady state (pump at its floor)
+    CHECK(r.pumpSpeed() == doctest::Approx(c.rack.peakModeMinSpeed));
+    double maxPeak = 0.0;
+    for (int n = 0; n < 2000; ++n) { r.step(0.01); maxPeak = std::max(maxPeak, r.hotspot().t); } // 20 s
+    CHECK(maxPeak < 86.0);                                               // feedback alone overshot past 100 C
+    CHECK(r.hotspot().t == doctest::Approx(80.0).epsilon(1.0 / 80.0));
+    CHECK(r.pumpSpeed() > 2.0 * c.rack.peakModeMinSpeed);               // the pump followed the load
 }

@@ -17,13 +17,13 @@ A C++ simulation with a 3D viewer of a liquid-cooled 42U rack. It is built up fr
 | **Server** | Two 300 W microchannel GPUs and one 200 W cold-plate CPU in parallel branches with hoses, quick disconnects and balancing valves. Branch flows are solved from pressure balance. A 200 W air-cooled group with fan power. |
 | **Rack** | 8 × 4U servers between rear supply and return manifolds (direct or reverse return), a pump curve with affinity laws and an efficiency curve, and three pump modes: fixed speed, fixed flow, or PI control on the hottest chip. A placeholder CDU resistance, hydrostatics, per-server workloads and a mixed return temperature. |
 | **Cooling plant** | CDU plate heat exchanger (ε-NTU, conductance falls with coolant viscosity) feeding a sealed facility loop, an outdoor dry cooler with PI-controlled fans and bypass, and an optional trim chiller. Loop thermal mass, constant or daily-sine outdoor air. |
+| **ML workload** | A PyTorch CNN trained on MNIST handwritten digits, which then scans pages and reads the digits on demand. Its measured device activity drives the job servers live in the 3D viewer, or is replayed by `mfsim cosim` for a per-phase energy analysis. See [docs/ml_workload.md](docs/ml_workload.md). |
 | **Energy** | Heat-balance residuals at every level, rack and facility pumps, dry-cooler fans, chiller, partial PUE, and water: 0 L/h evaporated, compared with what an evaporative tower would use. |
 
 Parameter tables, boundary conditions, assumptions and the hand calculations are in **[docs/parameters.md](docs/parameters.md)**. Labelled schematics: [chip](docs/schematics/chip.svg), [server](docs/schematics/server.svg), [rack](docs/schematics/rack.svg), [cooling plant](docs/schematics/plant.svg).
 
 **Not yet modelled:**
-- room HVAC for the air-cooled load;
-- the CNN workload. The `Workload` interface is ready for it.
+- room HVAC for the air-cooled load.
 
 ## Build
 
@@ -64,6 +64,24 @@ The left panel controls:
 - the manifold layout and the balancing valves.
 
 The right panel shows live flows, pressures, temperatures, pump and fan power, and the energy residual. To render one frame to a file without interacting, add `--scene chip --screenshot out.png`.
+
+## Train the CNN on the simulated data center
+
+```bash
+python3 -m venv .venv && .venv/bin/pip install torch torchvision matplotlib
+```
+
+```bash
+ml/live_demo.sh 8 8
+```
+
+```bash
+ml/run_job.sh 8 water,PG25
+```
+
+`ml/live_demo.sh` opens the viewer following the job live, then trains for 8 epochs on 8 servers. `ml/run_job.sh` trains, replays the recorded job on the rack and cooling plant for each coolant, and writes `results/ml/report.png`. MNIST (about 11 MB) is downloaded once into `data/`.
+
+![ML job report](docs/screenshots/ml_report.png)
 
 ## Run experiments (headless)
 
@@ -121,6 +139,12 @@ These are preliminary: CDU, dry-cooler and pump sizes are assumptions (see the p
 - **The dry cooler evaporates no water.** An evaporative tower would use about 9.5 L/h for the same 6.4 kW. The cost is electricity on hot days: partial PUE is 1.010 at 25 °C outdoor, 1.074 at 30 °C and 1.134 at 40 °C (chiller-assisted).
 - **Real glycols cost more than viscosity alone suggests.** Glycol also has lower thermal conductivity and heat capacity, so PG25 needs about 55 % more flow to hold 85 °C, on top of being more viscous. The rack pump uses 4× the power of water (60 W against 15 W), and total cooling electricity is about 2.2× (151 W against 70 W at 25 °C outdoor). PG40 costs about 4.5×. EG25 is slightly better than PG25.
 - **Freeze protection outdoors costs electricity too.** PG30 in the facility loop (frost-safe to −13 °C) raises plant electricity from 84 W to 166 W at 25 °C outdoor.
+- **CNN job (99.35 % MNIST accuracy; 99.2 % of digits read correctly on scanned pages):**
+  - With constant-flow pumping, cooling barely responds to the on-demand job. The loop's thermal mass absorbs the 2-minute training burst.
+  - PG25 pushes the hottest chip to 87.4 °C at 12 L/min; water reaches 79.9 °C.
+  - Variable-flow pumping with load feedforward holds both coolants under 85 °C. It cuts cooling energy by 36 % for water, but PG25 still needs 5× the pumping energy during training.
+  - Feedback-only pump control overshot to 116 °C when the job arrived.
+  - On-demand inference costs about 2× more energy per item than training, because idle power dominates.
 
 ## Layout
 
@@ -128,6 +152,7 @@ These are preliminary: CDU, dry-cooler and pump sizes are assumptions (see the p
 src/core/      headless physics library (fluid, hydraulics, thermal, system, workload, config)
 apps/mfsim/    experiments CLI
 apps/viewer/   raylib + raygui 3D viewer
+ml/            PyTorch CNN (MNIST), page scanner, activity monitor, report, run scripts
 configs/       JSON configs (keys carry units)
 tests/         doctest unit tests (IAPWS checks, analytic limits, energy and mass balance, controls)
 docs/          parameters, schematics, screenshots

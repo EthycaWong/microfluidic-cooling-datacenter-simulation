@@ -18,7 +18,7 @@ struct Label {
     bool strong = false;
 };
 
-struct HistorySample { double t, peak, pumpW, flowLpm, returnT; };
+struct HistorySample { double t, peak, pumpW, flowLpm, returnT, u; };
 
 /// Everything the UI can change, plus scene/camera state.
 struct ViewerState {
@@ -31,7 +31,8 @@ struct ViewerState {
     float outdoor = 25.0f;
     float setpoint = 35.0f;
     bool chiller = true;
-    int profile = 0;           ///< 0 manual, 1 square wave, 2 staggered square
+    int profile = 0;           ///< 0 manual, 1 square wave, 2 staggered square, 3 live ML job, 4 replay ML job
+    int jobServers = 2;        ///< index: 0 -> 2 servers, 1 -> 4, 2 -> 8 run the ML job
     float load[8] = {1, 1, 1, 1, 1, 1, 1, 1};
     float loadAll = 1.0f;
     float viscosity = 1.0f;

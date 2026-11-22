@@ -34,6 +34,11 @@ struct RackParams {
     double targetFlowLpm = 12.0;     ///< FixedFlow mode
     double targetPeakC = 85.0;       ///< PeakTemperature mode (study assumption, not a hardware limit)
     double piKp = 0.02, piKi = 0.1;  ///< PI gains on pump speed per K and per K s
+    /// PeakTemperature mode: pump speed = k_ff x (liquid heat, kW) + Kp x error, with k_ff (speed per kW)
+    /// integrated from the temperature error. Speed then follows a load step immediately instead of
+    /// waiting for the chips to heat up (feedback alone overshoots badly: chips respond in ~30 ms).
+    bool pumpFeedforward = true;
+    double peakModeMinSpeed = 0.3;   ///< pump never idles below this speed in PeakTemperature mode
     double supplyT = 35.0;           ///< fixed supply boundary until the CDU + dry cooler milestone
     double hydraulicInterval = 0.05; ///< s between thermal-hydraulic coupling updates
 };
@@ -122,7 +127,7 @@ private:
     int pumpEdge_ = -1, filterEdge_ = -1, hxEdge_ = -1, pumpIn_ = -1;
     std::vector<int> supplySeg_, returnSeg_, supplyNode_, returnNode_;
     std::vector<double> returnSegT_;
-    double t_ = 0.0, nextHyd_ = 0.0, returnT_ = 35.0, lastErr_ = 0.0;
+    double t_ = 0.0, nextHyd_ = 0.0, returnT_ = 35.0, lastErr_ = 0.0, kff_ = 0.0;
     double pumpJ_ = 0.0, fanJ_ = 0.0, itJ_ = 0.0;
 };
 

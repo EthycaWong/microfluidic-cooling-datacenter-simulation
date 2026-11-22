@@ -116,7 +116,7 @@ void Rack::setCoolant(std::shared_ptr<const Fluid> base) {
     for (auto& sv : servers_) sv.autoBalance(*net_);
     solveHydraulics();
 }
-void Rack::setPumpMode(PumpMode m) { rp_.pumpMode = m; lastErr_ = 0.0; }
+void Rack::setPumpMode(PumpMode m) { rp_.pumpMode = m; lastErr_ = 0.0; kff_ = 0.0; }
 void Rack::setPumpSpeed(double s) {
     rp_.pumpSpeed = std::clamp(s, rp_.pump.minSpeed, rp_.pump.maxSpeed);
     pump_->setSpeed(rp_.pumpSpeed);
@@ -194,8 +194,28 @@ void Rack::solveHydraulics() {
 
 void Rack::pumpControlTick(double interval) {
     const double e = hotspot().t - rp_.targetPeakC;
-    double s = rp_.pumpSpeed + rp_.piKp * (e - lastErr_) + rp_.piKi * e * interval;
-    rp_.pumpSpeed = std::clamp(s, rp_.pump.minSpeed, rp_.pump.maxSpeed);
+    const double smin = std::max(rp_.pump.minSpeed, rp_.peakModeMinSpeed), smax = rp_.pump.maxSpeed;
+    double s;
+    if (rp_.pumpFeedforward) {
+        // Commanded chip power (known the instant the workload changes), not last step's heat.
+        double pW = 0.0;
+        for (const auto& sv : servers_) pW += sv.liquidPower();
+        const double pkW = std::max(0.1, pW / 1000.0);
+        if (kff_ <= 0.0) kff_ = rp_.pumpSpeed / pkW;
+        const double kNew = std::max(1e-4, kff_ + rp_.piKi * e * interval / pkW); // integral on speed-per-kW
+        // The proportional term may raise speed freely but lower it only a little, so cool idle chips
+        // (large negative error) cannot cancel the feedforward when a job arrives.
+        const double pTerm = rp_.piKp * std::max(e, -5.0);
+        s = kNew * pkW + pTerm;
+        // Anti-windup: do not integrate while the speed is pinned at a limit in the error's direction
+        // (e.g. idle chips far below target with the pump at minimum speed).
+        const bool saturated = (s <= smin && e < 0) || (s >= smax && e > 0);
+        if (!saturated) kff_ = kNew;
+        else s = kff_ * pkW + pTerm;
+    } else {
+        s = rp_.pumpSpeed + rp_.piKp * (e - lastErr_) + rp_.piKi * e * interval; // velocity-form PI
+    }
+    rp_.pumpSpeed = std::clamp(s, smin, smax);
     lastErr_ = e;
 }
 
@@ -236,14 +256,20 @@ void Rack::solveSteady() {
     }
     // Find the pump speed whose steady hottest-chip temperature equals the target.
     auto peakAt = [&](double s) { rp_.pumpSpeed = s; steadyAtCurrentSpeed(); return hotspot().t; };
-    double lo = rp_.pump.minSpeed, hi = rp_.pump.maxSpeed;
-    if (peakAt(hi) > rp_.targetPeakC) return;  // cannot reach target even at max speed
-    if (peakAt(lo) < rp_.targetPeakC) return;  // already below target at min speed
+    double lo = std::max(rp_.pump.minSpeed, rp_.peakModeMinSpeed), hi = rp_.pump.maxSpeed;
+    auto seedFeedforward = [&] {
+        double pW = 0.0;
+        for (const auto& sv : servers_) pW += sv.liquidPower();
+        kff_ = rp_.pumpSpeed / std::max(0.1, pW / 1000.0);
+    };
+    if (peakAt(hi) > rp_.targetPeakC) { seedFeedforward(); return; } // cannot reach target even at max speed
+    if (peakAt(lo) < rp_.targetPeakC) { seedFeedforward(); return; } // already below target at min speed
     for (int it = 0; it < 50 && hi - lo > 1e-6; ++it) {
         const double mid = 0.5 * (lo + hi);
         if (peakAt(mid) > rp_.targetPeakC) lo = mid; else hi = mid;
     }
     peakAt(hi); // conservative side: peak <= target
+    seedFeedforward();
 }
 
 double Rack::totalMassFlow() const { return net_->flow(pumpEdge_); }

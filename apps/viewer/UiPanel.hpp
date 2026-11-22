@@ -11,6 +11,10 @@ struct App {
     mf::DataCenter* dc = nullptr;
     mf::Rack* rack = nullptr;
     std::vector<std::shared_ptr<mf::ConstantWorkload>> manual;
+    std::shared_ptr<mf::JobTraceWorkload> job;     ///< ML job driving the job servers (profiles 3, 4)
+    std::string liveTrace = "results/ml/activity_live.csv";
+    std::string replayTrace = "results/ml/activity_trace.csv";
+    std::string jobMessage;
     ViewerState s;
     bool requestSteady = false;
     bool requestFrame = false;

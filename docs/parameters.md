@@ -80,7 +80,7 @@ Branch flows are **solved** from equal branch pressure drop ([6]). Without valve
 | Filter | 8 kPa at 12 L/min, 30 % laminar | **ASSUMED** |
 | Expansion vessel | fixes 150 kPa at the pump suction | reference pressure |
 | Pump | H = s²·100 kPa − bQ², H = 0 at 20 L/min (s = 1); η_max 0.5 at 12 L/min; motor 0.9 | **ASSUMED** small in-rack pump |
-| Pump control | fixed speed / fixed flow (12 L/min) / PI on hottest chip (target 85 °C) | |
+| Pump control | fixed speed / fixed flow (12 L/min) / hold the hottest chip at a target | the hold-target mode uses load feedforward: speed = k·(chip power, kW) + Kp·error. The speed-per-kW gain k is integrated from the temperature error with anti-windup; the minimum speed is 30 %. Steady-state experiments solve for the speed directly (bisection) |
 | Supply temperature | `rack` level: fixed 35 °C. `plant` level: computed by the CDU model (§5b) | [8] |
 | Hydrostatics | one loop density; ρgz cancels around the closed loop | [14]; unit test |
 | Electrical pump power | P = Δp·V̇ / (η_pump·η_motor) | [10] |

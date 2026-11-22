@@ -8,6 +8,7 @@
 //   mfsim uneven-load     [--config F]                      half the rack loaded, direct vs reverse return
 //   mfsim climate-sweep   [--config F] [--temps ...]        plant: outdoor temperature vs cooling energy
 //   mfsim coolant-compare [--config F] [--coolants ...]     water vs glycol mixtures (real properties)
+//   mfsim cosim           [--trace F] [--coolants ...]      replay a recorded ML job (ml/train_mnist.py) on the rack
 //
 // Common: --viscosity X (viscosity multiplier), --level chip|server|rack (overrides the config).
 #include "Units.hpp"
@@ -71,6 +72,11 @@ SimConfig configFromImpl(const Args& a) {
     if (a.has("chiller")) c.plant.chiller.enabled = a.get("chiller") != "off";
     if (a.has("coolant")) c.coolant = a.get("coolant");
     if (a.has("facility-coolant")) c.facilityCoolant = a.get("facility-coolant");
+    if (a.has("target-peak")) c.rack.targetPeakC = a.num("target-peak", 85.0);
+    if (a.has("pump-mode")) {
+        const std::string m = a.get("pump-mode");
+        c.rack.pumpMode = m == "speed" ? PumpMode::FixedSpeed : m == "peak" ? PumpMode::PeakTemperature : PumpMode::FixedFlow;
+    }
     return c;
 }
 
@@ -670,6 +676,128 @@ int cmdCoolantCompare(const Args& a) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------------------------------
+/// Run the rack + cooling plant through a recorded compute job (ml/train_mnist.py) and account the
+/// energy by job phase.
+int cmdCosim(const Args& a) {
+    SimConfig c = configFrom(a);
+    const std::string tracePath = a.get("trace", "results/ml/activity_trace.csv");
+    const std::string metricsPath = a.get("metrics", "results/ml/metrics.json");
+    const double lead = a.num("lead", 60.0), tail = a.num("tail", 300.0), scale = a.num("time-scale", 1.0);
+    const double dt = a.num("dt", 0.05), every = a.num("every", 0.5);
+    const int jobServers = std::clamp(static_cast<int>(a.num("job-servers", c.rack.servers)), 1, c.rack.servers);
+    const bool plantOn = a.get("plant", "on") != "off";
+    std::vector<std::string> coolants;
+    {
+        std::stringstream ss(a.get("coolants", c.coolant));
+        std::string item;
+        while (std::getline(ss, item, ',')) coolants.push_back(item);
+    }
+    const std::string outDir = a.get("out", "results/ml");
+    std::filesystem::create_directories(outDir);
+
+    struct Acc { double sec = 0, it = 0, fans = 0, cool = 0, pump = 0, plantFans = 0, chiller = 0; };
+    std::ofstream js(outDir + "/cosim_summary.json");
+    js << "{\n  \"trace\": \"" << tracePath << "\",\n  \"job_servers\": " << jobServers << ",\n  \"gpus\": "
+       << 2 * jobServers << ",\n  \"time_scale\": " << scale << ",\n  \"plant\": " << (plantOn ? "true" : "false")
+       << ",\n  \"outdoor_C\": " << c.plant.weather.meanC << ",\n  \"runs\": [\n";
+
+    std::printf("Co-simulation: recorded job %s on %d of %d servers (%d GPUs), time scale x%.1f, %s\n", tracePath.c_str(),
+                jobServers, c.rack.servers, 2 * jobServers, scale,
+                plantOn ? ("cooling plant on, outdoor " + std::to_string(c.plant.weather.meanC).substr(0, 4) + " C").c_str()
+                        : "fixed supply temperature");
+    for (size_t ci = 0; ci < coolants.size(); ++ci) {
+        const std::string& coolant = coolants[ci];
+        SimConfig cc = c;
+        cc.coolant = coolant;
+        g_coolant = coolant;
+        auto dc = std::make_unique<DataCenter>(cc.rack, cc.server, cc.plant, makeCoolant(coolant), plantOn,
+                                               makeCoolant(cc.facilityCoolant));
+        dc->rack().setViscosityScale(cc.viscosityScale);
+        auto job = std::make_shared<JobTraceWorkload>(tracePath, lead, scale, false);
+        auto idle = std::make_shared<ConstantWorkload>(0.0);
+        for (int k = 0; k < dc->rack().serverCount(); ++k) dc->rack().setWorkload(k, k < jobServers ? std::shared_ptr<Workload>(job) : std::shared_ptr<Workload>(idle));
+        dc->solveSteady(); // idle steady state before the job arrives
+
+        const double total = lead + job->durationSim() + tail;
+        const int steps = static_cast<int>(std::ceil(total / dt));
+        const int stride = std::max(1, static_cast<int>(std::lround(every / dt)));
+        std::map<std::string, Acc> acc;
+        double peakMax = 0, supplyMax = 0, returnMax = 0;
+        std::string peakPhase;
+        auto f = openCsv(outDir + "/cosim_" + coolant + ".csv");
+        f << "t_s,phase,u,it_W,liquid_W,server_fans_W,equip_pump_W,facility_pump_W,drycooler_fan_W,chiller_W,cooling_W,"
+             "supply_C,return_C,peak_C,flow_lpm,pump_speed\n";
+        for (int n = 1; n <= steps; ++n) {
+            dc->step(dt);
+            const Rack& r = dc->rack();
+            const TracePoint tp = job->at(r.time());
+            const PlantState& p = dc->plant().state();
+            const double it = r.itPower(), fans = r.fanPower(), cool = dc->coolingPower();
+            Acc& A = acc[tp.phase];
+            A.sec += dt; A.it += it * dt; A.fans += fans * dt; A.cool += cool * dt; A.pump += r.pumpPower() * dt;
+            if (plantOn) { A.plantFans += p.fanPower * dt; A.chiller += p.chillerPower * dt; }
+            const double pk = r.hotspot().t;
+            if (pk > peakMax) { peakMax = pk; peakPhase = tp.phase; }
+            supplyMax = std::max(supplyMax, r.supplyT());
+            returnMax = std::max(returnMax, r.returnT());
+            if (n % stride == 0)
+                f << r.time() << ',' << tp.phase << ',' << tp.u << ',' << it << ',' << r.ledger().powerIn << ',' << fans << ','
+                  << r.pumpPower() << ',' << (plantOn ? p.facilityPumpPower : 0.0) << ',' << (plantOn ? p.fanPower : 0.0) << ','
+                  << (plantOn ? p.chillerPower : 0.0) << ',' << cool << ',' << r.supplyT() << ',' << r.returnT() << ','
+                  << pk << ',' << r.totalFlowLpm() << ',' << r.pumpSpeed() << '\n';
+        }
+        const TracePoint last = job->points().back();
+        const double gpus = 2.0 * jobServers;
+        auto sum = [&](std::initializer_list<const char*> ph, double Acc::*m) {
+            double v = 0;
+            for (const char* p : ph) if (acc.count(p)) v += acc[p].*m;
+            return v;
+        };
+        const double trainJ = sum({"train", "eval"}, &Acc::it) + sum({"train", "eval"}, &Acc::fans) + sum({"train", "eval"}, &Acc::cool);
+        const double scanJ = sum({"scan"}, &Acc::it) + sum({"scan"}, &Acc::fans) + sum({"scan"}, &Acc::cool);
+        double totIt = 0, totFans = 0, totCool = 0, totSec = 0;
+        for (auto& [k, v] : acc) { totIt += v.it; totFans += v.fans; totCool += v.cool; totSec += v.sec; }
+        const double jPerTrain = last.trainSamples > 0 ? trainJ / (last.trainSamples * gpus) : 0.0;
+        const double jPerInfer = last.inferSamples > 0 ? scanJ / (last.inferSamples * gpus) : 0.0;
+
+        std::printf("\n== coolant %s ==\n", dc->rack().coolant().name().c_str());
+        std::printf("  phase      sim s     IT kJ   srv fans kJ  cooling kJ  (pump / dry-cooler fans / chiller kJ)   pPUE\n");
+        for (const char* ph : {"waiting", "setup", "train", "eval", "scan", "idle", "done"}) {
+            if (!acc.count(ph)) continue;
+            const Acc& A = acc[ph];
+            const double itf = A.it + A.fans;
+            std::printf("  %-8s %7.1f %9.1f %11.2f %11.2f   (%.2f / %.2f / %.2f)   %.4f\n", ph, A.sec, A.it / 1e3, A.fans / 1e3,
+                        A.cool / 1e3, A.pump / 1e3, A.plantFans / 1e3, A.chiller / 1e3, itf > 0 ? (itf + A.cool) / itf : 1.0);
+        }
+        std::printf("  total    %7.1f %9.1f %11.2f %11.2f   overall pPUE %.4f\n", totSec, totIt / 1e3, totFans / 1e3, totCool / 1e3,
+                    (totIt + totFans + totCool) / (totIt + totFans));
+        std::printf("  hottest silicon %.2f C (during %s); max supply %.2f C, max return %.2f C\n", peakMax, peakPhase.c_str(),
+                    supplyMax, returnMax);
+        std::printf("  training: %.0f images per GPU x %.0f GPUs, %.3f J per image (rack + cooling)\n", last.trainSamples, gpus, jPerTrain);
+        std::printf("  scanning: %.0f digits per GPU x %.0f GPUs, %.4f J per digit read (rack + cooling)\n", last.inferSamples, gpus, jPerInfer);
+
+        js << "    {\"coolant\": \"" << coolant << "\", \"csv\": \"" << outDir << "/cosim_" << coolant << ".csv\", \"it_J\": " << totIt
+           << ", \"server_fans_J\": " << totFans << ", \"cooling_J\": " << totCool << ", \"train_J\": " << trainJ
+           << ", \"scan_J\": " << scanJ << ", \"J_per_train_image\": " << jPerTrain << ", \"J_per_digit\": " << jPerInfer
+           << ", \"peak_C\": " << peakMax << ", \"partial_pue\": " << (totIt + totFans + totCool) / (totIt + totFans)
+           << ", \"phases\": {";
+        bool first = true;
+        for (auto& [k, v] : acc) {
+            js << (first ? "" : ", ") << "\"" << k << "\": {\"s\": " << v.sec << ", \"it_J\": " << v.it << ", \"fans_J\": " << v.fans
+               << ", \"cooling_J\": " << v.cool << ", \"pump_J\": " << v.pump << ", \"plant_fans_J\": " << v.plantFans
+               << ", \"chiller_J\": " << v.chiller << "}";
+            first = false;
+        }
+        js << "}}" << (ci + 1 < coolants.size() ? "," : "") << "\n";
+    }
+    js << "  ],\n  \"metrics\": \"" << metricsPath << "\"\n}\n";
+    std::printf("\nAssumption: each simulated GPU runs a data-parallel replica at the measured device's throughput, so the\n"
+                "job processes (measured samples x GPUs). Wrote %s/cosim_*.csv and cosim_summary.json\n", outDir.c_str());
+    g_coolant = c.coolant;
+    return 0;
+}
+
 int usage() {
     std::printf(
         "mfsim - microfluidic cooling data-center simulation (headless)\n\n"
@@ -680,7 +808,9 @@ int usage() {
         "  mfsim sweep-viscosity [--config F] [--level L] [--scales 1,2,4] [--out f.csv]\n"
         "  mfsim uneven-load     [--config F]\n"
         "  mfsim climate-sweep   [--config F] [--temps 0,10,20,30,40]\n"
-        "  mfsim coolant-compare [--config F] [--level rack|plant] [--coolants water,PG25,PG40,EG25]\n\n"
+        "  mfsim coolant-compare [--config F] [--level rack|plant] [--coolants water,PG25,PG40,EG25]\n"
+        "  mfsim cosim           [--config F] [--trace results/ml/activity_trace.csv] [--coolants water,PG25]\n"
+        "                        [--lead 60] [--tail 300] [--time-scale 1] [--job-servers 8] [--plant on|off]\n\n"
         "Levels: chip | server | rack (fixed 35 C supply) | plant (rack + CDU + dry cooler + trim chiller)\n"
         "Common options: --coolant water|PG25|EG30|PG25m, --facility-coolant ..., --viscosity X, --outdoor C,\n"
         "                --chiller on|off; run: --start-steady\n");
@@ -700,6 +830,7 @@ int main(int argc, char** argv) {
         if (a.cmd == "uneven-load") return cmdUnevenLoad(a);
         if (a.cmd == "climate-sweep") return cmdClimateSweep(a);
         if (a.cmd == "coolant-compare") return cmdCoolantCompare(a);
+        if (a.cmd == "cosim") return cmdCosim(a);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 2;

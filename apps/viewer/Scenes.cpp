@@ -513,7 +513,7 @@ void drawLegend(const ViewerState& s, Rectangle a) {
 
 void drawHistory(const ViewerState& s, Rectangle a) {
     DrawRectangleRounded(a, 0.04f, 6, Color{14, 16, 20, 200});
-    drawText(s, "Hottest chip (\xC2\xB0""C, red) and pump power (W, blue): last 60 s", a.x + 10, a.y + 6, 15, kInk);
+    drawText(s, "Hottest chip (\xC2\xB0""C, red), pump power (W, blue), server 1 activity u (green): last 60 s", a.x + 10, a.y + 6, 15, kInk);
     if (s.history.size() < 2) return;
     const Rectangle p{a.x + 44, a.y + 30, a.width - 92, a.height - 44};
     DrawRectangleLinesEx(p, 1, Color{60, 66, 76, 255});
@@ -528,18 +528,20 @@ void drawHistory(const ViewerState& s, Rectangle a) {
         drawText(s, fmt("%.0f", tl), a.x + 10, y - 8, 13, kDim);
     }
     drawText(s, fmt("%.0f W", pmax), p.x + p.width + 6, p.y - 2, 13, Color{110, 170, 255, 255});
-    Vector2 prevT{}, prevP{};
+    Vector2 prevT{}, prevP{}, prevU{};
     bool first = true;
     for (const auto& h : s.history) {
         if (h.t < t0) continue;
         const float x = p.x + p.width * static_cast<float>((h.t - t0) / 60.0);
         const Vector2 vt{x, p.y + p.height * static_cast<float>(1 - std::clamp((h.peak - tLo) / (tHi - tLo), 0.0, 1.0))};
         const Vector2 vp{x, p.y + p.height * static_cast<float>(1 - std::clamp(h.pumpW / pmax, 0.0, 1.0))};
+        const Vector2 vu{x, p.y + p.height * static_cast<float>(1 - std::clamp(h.u, 0.0, 1.0))};
         if (!first) {
+            DrawLineEx(prevU, vu, 1.5f, Color{110, 220, 140, 200});
             DrawLineEx(prevT, vt, 2.0f, Color{255, 90, 80, 255});
             DrawLineEx(prevP, vp, 2.0f, Color{110, 170, 255, 255});
         }
-        prevT = vt; prevP = vp; first = false;
+        prevT = vt; prevP = vp; prevU = vu; first = false;
     }
 }
 
