@@ -9,8 +9,10 @@ constexpr double kLatentHeat = 2.43e6; // J/kg, water evaporating near 30 C
 }
 
 DataCenter::DataCenter(const RackParams& rp, const ServerParams& sp, const PlantParams& pp,
-                       std::shared_ptr<const Fluid> baseFluid, bool plantEnabled)
-    : rack_(rp, sp, baseFluid), plant_(pp, rack_.fluid(), std::make_shared<WaterIAPWS>()), plantOn_(plantEnabled),
+                       std::shared_ptr<const Fluid> baseFluid, bool plantEnabled,
+                       std::shared_ptr<const Fluid> facilityFluid)
+    : rack_(rp, sp, baseFluid),
+      plant_(pp, rack_.fluid(), facilityFluid ? facilityFluid : std::make_shared<WaterIAPWS>()), plantOn_(plantEnabled),
       fixedSupply_(rp.supplyT) {}
 
 void DataCenter::setPlantEnabled(bool on) {

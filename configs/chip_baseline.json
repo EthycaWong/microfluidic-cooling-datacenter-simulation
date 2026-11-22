@@ -2,7 +2,8 @@
   // One microchannel GPU: fixed 0.5 L/min, 35 C inlet, full power.
   // Keys carry their units. Values marked ASSUMED are study assumptions, see docs/parameters.md.
   "level": "chip",
-  "fluid": { "viscosity_scale": 1.0 },
+  // coolant: water | PG25 | PG40 | EG25 ... (volume %; add "m" for mass %); glycols use Melinder (IIR) data
+  "fluid": { "viscosity_scale": 1.0, "coolant": "water", "facility_coolant": "water" },
 
   "gpu": {
     "cooling": "microchannel",

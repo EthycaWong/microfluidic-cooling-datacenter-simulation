@@ -7,6 +7,7 @@
 //   mfsim sweep-viscosity [--config F] [--level L] [--scales 1,2,4] [--out f.csv]
 //   mfsim uneven-load     [--config F]                      half the rack loaded, direct vs reverse return
 //   mfsim climate-sweep   [--config F] [--temps ...]        plant: outdoor temperature vs cooling energy
+//   mfsim coolant-compare [--config F] [--coolants ...]     water vs glycol mixtures (real properties)
 //
 // Common: --viscosity X (viscosity multiplier), --level chip|server|rack (overrides the config).
 #include "Units.hpp"
@@ -54,12 +55,22 @@ Args parse(int argc, char** argv) {
     return a;
 }
 
+std::string g_coolant = "water"; // equipment-loop coolant for this run (set from the config)
+
+SimConfig configFromImpl(const Args& a);
 SimConfig configFrom(const Args& a) {
+    SimConfig c = configFromImpl(a);
+    g_coolant = c.coolant;
+    return c;
+}
+SimConfig configFromImpl(const Args& a) {
     SimConfig c = a.has("config") ? loadConfig(a.get("config")) : defaultConfig();
     if (a.has("level")) c.level = a.get("level");
     if (a.has("viscosity")) c.viscosityScale = a.num("viscosity", 1.0);
     if (a.has("outdoor")) c.plant.weather.meanC = a.num("outdoor", 25.0);
     if (a.has("chiller")) c.plant.chiller.enabled = a.get("chiller") != "off";
+    if (a.has("coolant")) c.coolant = a.get("coolant");
+    if (a.has("facility-coolant")) c.facilityCoolant = a.get("facility-coolant");
     return c;
 }
 
@@ -72,7 +83,7 @@ std::vector<double> parseList(const std::string& s) {
 }
 
 std::shared_ptr<ScaledFluid> makeFluid(double scale) {
-    return std::make_shared<ScaledFluid>(std::make_shared<WaterIAPWS>(), scale);
+    return std::make_shared<ScaledFluid>(makeCoolant(g_coolant), scale);
 }
 
 void applyWorkloads(Rack& r, const SimConfig& c) {
@@ -130,8 +141,8 @@ void printRackSummary(const Rack& r) {
     std::printf("Pump: %s, speed %.3f, flow %.3f L/min, head %.2f kPa, eta %.2f, electric %.2f W\n",
                 toString(r.params().pumpMode), r.pumpSpeed(), r.totalFlowLpm(), r.pumpHead() / 1e3,
                 r.pumpEfficiency(), r.pumpPower());
-    std::printf("Layout %s, viscosity x%.2f, supply %.2f C, mixed return %.3f C\n", toString(r.params().layout),
-                r.viscosityScale(), r.supplyT(), r.returnT());
+    std::printf("Coolant: %s; layout %s, viscosity x%.2f, supply %.2f C, mixed return %.3f C\n",
+                r.coolant().name().c_str(), toString(r.params().layout), r.viscosityScale(), r.supplyT(), r.returnT());
     std::printf("IT %.1f W (liquid %.1f W, air group %.1f W, of which %.1f W is reaching room air now)\n", r.itPower(),
                 l.powerIn, r.itPower() - l.powerIn, r.airHeat());
     std::printf("Fans %.2f W, liquid energy residual %.2e W\n", r.fanPower(), l.residual());
@@ -150,7 +161,8 @@ void printRackSummary(const Rack& r) {
 }
 
 std::unique_ptr<DataCenter> makeDataCenter(const SimConfig& c, double viscosity) {
-    auto dc = std::make_unique<DataCenter>(c.rack, c.server, c.plant, std::make_shared<WaterIAPWS>(), true);
+    auto dc = std::make_unique<DataCenter>(c.rack, c.server, c.plant, makeCoolant(c.coolant), true,
+                                           makeCoolant(c.facilityCoolant));
     dc->rack().setViscosityScale(viscosity);
     applyWorkloads(dc->rack(), c);
     return dc;
@@ -160,6 +172,9 @@ void printPlantSummary(const DataCenter& dc) {
     const PlantState& p = dc.plant().state();
     std::printf("Plant: outdoor %.1f C, supply setpoint %.1f C -> equipment supply %.2f C\n", p.outdoorT,
                 dc.plant().params().supplySetpointC, p.equipSupplyT);
+    std::printf("  Facility fluid: %s (freezes at %.1f C)%s\n", dc.plant().facilityFluid().name().c_str(),
+                dc.plant().facilityFreezingPointC(),
+                p.freezeRisk ? "  ** FREEZE RISK: outdoor air is within 2 K of the facility fluid's freezing point **" : "");
     std::printf("  CDU: UA %.0f W/K, effectiveness %.3f, equipment %.2f -> %.2f C, facility %.2f -> %.2f C, %.0f W\n",
                 p.cduUA, p.cduEffectiveness, p.cduHotInT, p.cduHotOutT, p.facilitySupplyT, p.facilityReturnT, p.cduHeat);
     std::printf("  Dry cooler: fans %.0f%% = %.1f W, UA %.0f W/K, effectiveness %.3f, rejects %.0f W, outlet %.2f C\n",
@@ -218,7 +233,7 @@ int cmdSteady(const Args& a) {
         printPlantSummary(*dc);
         return 0;
     }
-    Rack rack(c.rack, c.server, std::make_shared<WaterIAPWS>());
+    Rack rack(c.rack, c.server, makeCoolant(g_coolant));
     rack.setViscosityScale(c.viscosityScale);
     applyWorkloads(rack, c);
     rack.solveSteady();
@@ -300,7 +315,7 @@ int cmdRun(const Args& a) {
         std::printf("Energy over run: IT %.1f kJ, cooling %.2f kJ (dry-cooler fans %.2f kJ, chiller %.2f kJ)\n",
                     r.itEnergy() / 1e3, dc->coolingEnergy() / 1e3, dc->plantFanEnergy() / 1e3, dc->chillerEnergy() / 1e3);
     } else {
-        Rack r(c.rack, c.server, std::make_shared<WaterIAPWS>());
+        Rack r(c.rack, c.server, makeCoolant(g_coolant));
         r.setViscosityScale(c.viscosityScale);
         applyWorkloads(r, c);
         f << "t_s,it_W,liquid_W,air_W,flow_lpm,pump_speed,pump_head_kPa,pump_W,fan_W,supply_C,return_C,peak_C,"
@@ -488,7 +503,7 @@ int cmdSweepViscosity(const Args& a) {
         double speed1 = NAN;
         for (double s : scales) {
             auto run = [&](const char* name, PumpMode mode, double speed) {
-                Rack r(c.rack, c.server, std::make_shared<WaterIAPWS>());
+                Rack r(c.rack, c.server, makeCoolant(g_coolant));
                 r.setViscosityScale(s);
                 applyWorkloads(r, c);
                 r.setPumpMode(mode);
@@ -531,7 +546,7 @@ int cmdUnevenLoad(const Args& a) {
         for (const auto& pat : patterns) {
             RackParams rp = c.rack;
             rp.layout = layout;
-            Rack r(rp, c.server, std::make_shared<WaterIAPWS>());
+            Rack r(rp, c.server, makeCoolant(g_coolant));
             r.setViscosityScale(c.viscosityScale);
             for (int k = 0; k < r.serverCount(); ++k)
                 r.setWorkload(k, std::make_shared<ConstantWorkload>(pat.u[k % pat.u.size()]));
@@ -584,6 +599,77 @@ int cmdClimateSweep(const Args& a) {
     return 0;
 }
 
+int cmdCoolantCompare(const Args& a) {
+    SimConfig c = configFrom(a);
+    std::vector<std::string> list;
+    {
+        std::stringstream ss(a.get("coolants", "water,PG25,PG40,EG25"));
+        std::string item;
+        while (std::getline(ss, item, ',')) list.push_back(item);
+    }
+    const bool plant = c.level == "plant";
+    const double limit = c.rack.targetPeakC;
+    auto f = openCsv(a.get("out", std::string("results/coolants_") + (plant ? "plant" : "rack") + ".csv"));
+    f << "coolant,case,flow_lpm,pump_head_kPa,equip_pump_W,peak_C,return_C,cdu_UA,drycooler_fan_W,chiller_W,"
+         "cooling_W,partial_pue,chip_min_flow_lpm\n";
+    std::printf("Practical coolant comparison (%s level): real temperature-dependent properties for each fluid.\n",
+                plant ? "plant" : "rack");
+    if (plant) std::printf("Outdoor %.1f C, facility loop %s.\n", c.plant.weather.meanC, c.facilityCoolant.c_str());
+    std::printf("\n coolant  freeze C  mu@40C mPa s  cp@40C  k@40C   chip flow for %.0f C   (single GPU, hotspot map)\n", limit);
+    for (const auto& name : list) {
+        auto fl = makeCoolant(name);
+        const FluidProps p = fl->props(40.0);
+        const auto* g = dynamic_cast<const GlycolMixture*>(fl.get());
+        // chip-level: minimum GPU flow that holds the peak at the limit (35 C inlet)
+        auto chipPeak = [&](double lpm) {
+            ChipGrid chip(c.server.gpu, fl);
+            chip.setMassFlow(fl->props(35.0).rho * lpmToM3s(lpm));
+            chip.setInletT(35.0);
+            chip.setActivity(1.0);
+            chip.solveSteady();
+            return chip.peakT();
+        };
+        const double q = bisect(chipPeak, 0.01, 5.0, limit, true);
+        std::printf(" %-7s %8.1f %12.3f %8.0f %7.4f   %.4f L/min\n", name.c_str(), g ? g->freezingPointC() : 0.0, p.mu * 1e3,
+                    p.cp, p.k, q);
+    }
+    std::printf("\n coolant  case                 flow L/min  head kPa  pump W   peak C  return C");
+    if (plant) std::printf("  CDU UA  fans W  chiller W  cooling W  pPUE");
+    std::printf("\n");
+    for (const auto& name : list) {
+        for (PumpMode mode : {PumpMode::FixedFlow, PumpMode::PeakTemperature}) {
+            SimConfig cc = c;
+            cc.coolant = name;
+            g_coolant = name;
+            cc.rack.pumpMode = mode;
+            const char* cname = mode == PumpMode::FixedFlow ? "fixed 12 L/min" : "hold peak at limit";
+            double cool = 0, pue = 1, ua = 0, fans = 0, chill = 0;
+            double flow, head, pw, peak, ret;
+            if (plant) {
+                auto dc = makeDataCenter(cc, 1.0);
+                dc->solveSteady();
+                const Rack& r = dc->rack();
+                flow = r.totalFlowLpm(); head = r.pumpHead() / 1e3; pw = r.pumpPower(); peak = r.hotspot().t; ret = r.returnT();
+                const PlantState& ps = dc->plant().state();
+                cool = dc->coolingPower(); pue = dc->partialPue(); ua = ps.cduUA; fans = ps.fanPower; chill = ps.chillerPower;
+            } else {
+                Rack r(cc.rack, cc.server, makeCoolant(name));
+                applyWorkloads(r, cc);
+                r.solveSteady();
+                flow = r.totalFlowLpm(); head = r.pumpHead() / 1e3; pw = r.pumpPower(); peak = r.hotspot().t; ret = r.returnT();
+                cool = pw;
+            }
+            std::printf(" %-7s %-20s %10.3f %9.2f %7.2f %8.2f %9.3f", name.c_str(), cname, flow, head, pw, peak, ret);
+            if (plant) std::printf(" %7.0f %7.1f %10.1f %10.1f  %.4f", ua, fans, chill, cool, pue);
+            std::printf("\n");
+            f << name << ',' << cname << ',' << flow << ',' << head << ',' << pw << ',' << peak << ',' << ret << ',' << ua << ','
+              << fans << ',' << chill << ',' << cool << ',' << pue << ",\n";
+        }
+    }
+    g_coolant = c.coolant;
+    return 0;
+}
+
 int usage() {
     std::printf(
         "mfsim - microfluidic cooling data-center simulation (headless)\n\n"
@@ -593,9 +679,11 @@ int usage() {
         "  mfsim resolution      [--config F]\n"
         "  mfsim sweep-viscosity [--config F] [--level L] [--scales 1,2,4] [--out f.csv]\n"
         "  mfsim uneven-load     [--config F]\n"
-        "  mfsim climate-sweep   [--config F] [--temps 0,10,20,30,40]\n\n"
+        "  mfsim climate-sweep   [--config F] [--temps 0,10,20,30,40]\n"
+        "  mfsim coolant-compare [--config F] [--level rack|plant] [--coolants water,PG25,PG40,EG25]\n\n"
         "Levels: chip | server | rack (fixed 35 C supply) | plant (rack + CDU + dry cooler + trim chiller)\n"
-        "Common options: --viscosity X, --outdoor C, --chiller on|off; run: --start-steady\n");
+        "Common options: --coolant water|PG25|EG30|PG25m, --facility-coolant ..., --viscosity X, --outdoor C,\n"
+        "                --chiller on|off; run: --start-steady\n");
     return 1;
 }
 
@@ -611,6 +699,7 @@ int main(int argc, char** argv) {
         if (a.cmd == "sweep-viscosity") return cmdSweepViscosity(a);
         if (a.cmd == "uneven-load") return cmdUnevenLoad(a);
         if (a.cmd == "climate-sweep") return cmdClimateSweep(a);
+        if (a.cmd == "coolant-compare") return cmdCoolantCompare(a);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 2;

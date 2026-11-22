@@ -51,6 +51,9 @@ public:
     void setAllWorkloads(const std::shared_ptr<Workload>& w);
     /// Change coolant viscosity; by default the server balancing valves are re-sized for it.
     void setViscosityScale(double s, bool rebalance = true);
+    /// Swap the equipment-loop coolant (water, PG25, ...); valves are re-commissioned for it.
+    void setCoolant(std::shared_ptr<const Fluid> base);
+    const Fluid& coolant() const { return fluid_->base(); }
     double viscosityScale() const { return fluid_->scale(); }
     std::shared_ptr<const Fluid> fluid() const { return fluid_; }
     void setPumpMode(PumpMode m);

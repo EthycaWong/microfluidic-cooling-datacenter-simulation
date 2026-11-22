@@ -17,7 +17,7 @@ Server::Server(const ServerParams& p, std::shared_ptr<const Fluid> fluid, int in
 std::string Server::branchName(int b) const { return b == 0 ? "GPU1" : b == 1 ? "GPU2" : "CPU"; }
 
 void Server::attach(HydraulicNetwork& net, int supplyNode, int returnNode, double z) {
-    const FluidProps ref = fluid_->props(p_.balanceT);
+    const FluidProps ref = referenceWater(p_.balanceT); // component curves are specified for water
     const std::string tag = "S" + std::to_string(index_ + 1) + ".";
     nodeS_ = net.addNode(tag + "in", z);
     nodeR_ = net.addNode(tag + "out", z);
@@ -59,7 +59,10 @@ void Server::autoBalance(HydraulicNetwork& net) {
         mx = std::max(mx, dp[b]);
     }
     for (int b = 0; b < kBranches; ++b) {
-        valveDp_[b] = mx - dp[b];
+        // The valve law is linear in dpRef: size it so that it adds exactly (mx - dp) with this coolant.
+        valve_[b]->setDpRef(1.0);
+        const double unit = valve_[b]->dp(m, net.fluid());
+        valveDp_[b] = unit > 0 ? (mx - dp[b]) / unit : 0.0;
         valve_[b]->setDpRef(valveDp_[b]);
     }
 }

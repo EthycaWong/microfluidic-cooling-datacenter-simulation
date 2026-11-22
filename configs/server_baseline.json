@@ -2,7 +2,8 @@
   // One server on a test rig: fixed 35 C supply and fixed 1.5 L/min total flow (temporary boundary).
   // Keys carry their units. Values marked ASSUMED are study assumptions, see docs/parameters.md.
   "level": "server",
-  "fluid": { "viscosity_scale": 1.0 },
+  // coolant: water | PG25 | PG40 | EG25 ... (volume %; add "m" for mass %); glycols use Melinder (IIR) data
+  "fluid": { "viscosity_scale": 1.0, "coolant": "water", "facility_coolant": "water" },
 
   "gpu": {
     "cooling": "microchannel",

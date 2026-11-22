@@ -2,7 +2,8 @@
   // Baseline 42U rack: 8 x 4U servers, each with 2 microchannel GPUs + 1 cold-plate CPU + air group.
   // Keys carry their units. Values marked ASSUMED are study assumptions, see docs/parameters.md.
   "level": "rack",
-  "fluid": { "viscosity_scale": 1.0 },
+  // coolant: water | PG25 | PG40 | EG25 ... (volume %; add "m" for mass %); glycols use Melinder (IIR) data
+  "fluid": { "viscosity_scale": 1.0, "coolant": "water", "facility_coolant": "water" },
 
   "gpu": {
     "cooling": "microchannel",

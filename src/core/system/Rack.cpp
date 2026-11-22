@@ -46,7 +46,7 @@ void Rack::buildNetwork() {
     net_ = std::make_unique<HydraulicNetwork>(fluid_);
     const int n = rp_.servers;
     const double D = rp_.manifoldDiameter;
-    const FluidProps ref = fluid_->props(rp_.supplyT);
+    const FluidProps ref = referenceWater(rp_.supplyT); // filter / HX curves are specified for water
     supplySeg_.assign(n, -1);
     returnSeg_.assign(n, -1);
     supplyNode_.assign(n, -1);
@@ -109,6 +109,11 @@ void Rack::setViscosityScale(double s, bool rebalance) {
     // viscosity comparison changes only the coolant, not the valve settings.
     if (rebalance)
         for (auto& sv : servers_) sv.autoBalance(*net_);
+    solveHydraulics();
+}
+void Rack::setCoolant(std::shared_ptr<const Fluid> base) {
+    fluid_->setBase(std::move(base));
+    for (auto& sv : servers_) sv.autoBalance(*net_);
     solveHydraulics();
 }
 void Rack::setPumpMode(PumpMode m) { rp_.pumpMode = m; lastErr_ = 0.0; }

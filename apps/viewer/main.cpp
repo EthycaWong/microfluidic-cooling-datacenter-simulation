@@ -81,7 +81,8 @@ int main(int argc, char** argv) {
     GuiSetStyle(DEFAULT, TEXT_SIZE, 15);
 
     const bool plantOn = arg(argc, argv, "--plant", "on") != "off";
-    mf::DataCenter dc(cfg.rack, cfg.server, cfg.plant, std::make_shared<mf::WaterIAPWS>(), plantOn);
+    const std::string coolArg = arg(argc, argv, "--coolant", cfg.coolant.c_str());
+    mf::DataCenter dc(cfg.rack, cfg.server, cfg.plant, mf::makeCoolant(coolArg), plantOn, mf::makeCoolant(cfg.facilityCoolant));
     mf::Rack& rack = dc.rack();
     rack.setViscosityScale(cfg.viscosityScale);
     App app;
@@ -91,6 +92,8 @@ int main(int argc, char** argv) {
     app.s.outdoor = static_cast<float>(cfg.plant.weather.meanC);
     app.s.setpoint = static_cast<float>(cfg.plant.supplySetpointC);
     app.s.chiller = cfg.plant.chiller.enabled;
+    app.s.coolant = coolArg == "PG25" ? 1 : coolArg == "PG40" ? 2 : coolArg == "EG25" ? 3 : 0;
+    app.s.facilityCoolant = cfg.facilityCoolant == "water" ? 0 : 1;
     const std::string outdoorArg = arg(argc, argv, "--outdoor", "");
     if (!outdoorArg.empty()) { app.s.outdoor = std::stof(outdoorArg); dc.plant().setOutdoorMean(app.s.outdoor); }
     app.s.font = font;
@@ -124,7 +127,7 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         const float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
         const Vector2 mouse = GetMousePosition();
-        const Rectangle readoutArea{sw - 380, 12, 368, 750};
+        const Rectangle readoutArea{sw - 380, 12, 368, 790};
         const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea);
 
         // ---- camera input ----

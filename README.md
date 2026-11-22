@@ -12,7 +12,7 @@ A C++ simulation with a 3D viewer of a liquid-cooled 42U rack. It is built up fr
 
 | Level | Model |
 |---|---|
-| **Coolant** | Water from IAPWS-IF97, IAPWS 2008 viscosity and IAPWS 2011 conductivity, checked against the releases' test values. A viscosity-only multiplier is available for the 1×/2×/4× experiment. |
+| **Coolant** | Water from IAPWS-IF97, IAPWS 2008 viscosity and IAPWS 2011 conductivity, checked against the releases' test values. Propylene and ethylene glycol mixtures (PG25, PG40, EG25 ...) from the Melinder (IIR) correlations, with freezing points. Selectable separately for the rack loop and the outdoor facility loop. A viscosity-only multiplier is available for the 1×/2×/4× experiment. |
 | **Chip** | 20 × 20 mm die with 50 microchannels (200 × 500 µm). A 10 × 10 thermal RC grid with backward-Euler time stepping; coolant warms along the channels. Laminar developing-flow pressure drop and heat transfer with rib fin efficiency. |
 | **Server** | Two 300 W microchannel GPUs and one 200 W cold-plate CPU in parallel branches with hoses, quick disconnects and balancing valves. Branch flows are solved from pressure balance. A 200 W air-cooled group with fan power. |
 | **Rack** | 8 × 4U servers between rear supply and return manifolds (direct or reverse return), a pump curve with affinity laws and an efficiency curve, and three pump modes: fixed speed, fixed flow, or PI control on the hottest chip. A placeholder CDU resistance, hydrostatics, per-server workloads and a mixed return temperature. |
@@ -22,7 +22,6 @@ A C++ simulation with a 3D viewer of a liquid-cooled 42U rack. It is built up fr
 Parameter tables, boundary conditions, assumptions and the hand calculations are in **[docs/parameters.md](docs/parameters.md)**. Labelled schematics: [chip](docs/schematics/chip.svg), [server](docs/schematics/server.svg), [rack](docs/schematics/rack.svg), [cooling plant](docs/schematics/plant.svg).
 
 **Not yet modelled:**
-- glycol coolants (they need mixture property data);
 - room HVAC for the air-cooled load;
 - the CNN workload. The `Workload` interface is ready for it.
 
@@ -59,8 +58,8 @@ To build only the headless parts, add `-DMF_BUILD_VIEWER=OFF`.
 
 The left panel controls:
 - the per-server load, or a square-wave workload;
-- coolant viscosity;
-- the cooling plant: on/off, supply setpoint, outdoor air temperature, and the trim chiller;
+- the coolant (water, PG25, PG40, EG25) and its viscosity multiplier;
+- the cooling plant: on/off, supply setpoint, outdoor air temperature, facility fluid (water or PG30), and the trim chiller;
 - the pump mode and its target;
 - the manifold layout and the balancing valves.
 
@@ -101,10 +100,14 @@ The right panel shows live flows, pressures, temperatures, pump and fan power, a
 ```
 
 ```bash
+./build/mfsim coolant-compare --config configs/plant_baseline.json
+```
+
+```bash
 ./build/mfsim run --config configs/rack_square_wave.json --duration 60 --dt 0.01
 ```
 
-`--level chip|server|rack|plant` changes the level of any config; `--outdoor C` and `--chiller off` override the plant settings. Every command writes a CSV to `results/`.
+`--level chip|server|rack|plant` changes the level of any config; `--coolant PG25`, `--facility-coolant PG30`, `--outdoor C` and `--chiller off` override the config. Every command writes a CSV to `results/`.
 
 ## First findings
 
@@ -114,8 +117,10 @@ These are preliminary: CDU, dry-cooler and pump sizes are assumptions (see the p
 - **At a given flow, viscosity does not change chip temperatures**, because Re·Pr contains no μ. It changes pumping power instead. Holding the hottest chip at 85 °C takes about 10.1 L/min at 1×, 2× and 4× viscosity, while pump power rises from 14.7 W to 21.8 W to 37.5 W.
 - If the pump isn't re-adjusted, 4× viscosity cuts flow to 8.2 L/min and the hottest chip reaches 89.4 °C.
 - Direct-return manifolds give the top server the least flow (2 % spread). Reverse return evens this out (0.7 %).
-- **With the cooling plant**, thicker coolant also weakens the CDU heat exchanger (UA −19 % at 4×), so the facility side must run colder. Holding 85 °C at 4× viscosity raises total cooling electricity from 71 W to 112 W at 25 °C outdoor, and from 561 W to 661 W at 30 °C (mostly chiller).
-- **The dry cooler evaporates no water.** An evaporative tower would use about 9.5 L/h for the same 6.4 kW. The cost is electricity on hot days: partial PUE is 1.011 at 25 °C outdoor, 1.074 at 30 °C and 1.134 at 40 °C (chiller-assisted).
+- **With the cooling plant**, thicker coolant also weakens the CDU heat exchanger (UA −19 % at 4×), so the facility side must run colder. Holding 85 °C at 4× viscosity raises total cooling electricity from 70 W to 110 W at 25 °C outdoor, and from 557 W to 658 W at 30 °C (mostly chiller).
+- **The dry cooler evaporates no water.** An evaporative tower would use about 9.5 L/h for the same 6.4 kW. The cost is electricity on hot days: partial PUE is 1.010 at 25 °C outdoor, 1.074 at 30 °C and 1.134 at 40 °C (chiller-assisted).
+- **Real glycols cost more than viscosity alone suggests.** Glycol also has lower thermal conductivity and heat capacity, so PG25 needs about 55 % more flow to hold 85 °C, on top of being more viscous. The rack pump uses 4× the power of water (60 W against 15 W), and total cooling electricity is about 2.2× (151 W against 70 W at 25 °C outdoor). PG40 costs about 4.5×. EG25 is slightly better than PG25.
+- **Freeze protection outdoors costs electricity too.** PG30 in the facility loop (frost-safe to −13 °C) raises plant electricity from 84 W to 166 W at 25 °C outdoor.
 
 ## Layout
 

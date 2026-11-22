@@ -12,7 +12,8 @@ namespace mf {
 class DataCenter {
 public:
     DataCenter(const RackParams& rp, const ServerParams& sp, const PlantParams& pp,
-               std::shared_ptr<const Fluid> baseFluid, bool plantEnabled = true);
+               std::shared_ptr<const Fluid> baseFluid, bool plantEnabled = true,
+               std::shared_ptr<const Fluid> facilityFluid = nullptr);
 
     Rack& rack() { return rack_; }
     const Rack& rack() const { return rack_; }

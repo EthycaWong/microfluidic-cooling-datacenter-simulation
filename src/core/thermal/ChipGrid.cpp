@@ -63,7 +63,12 @@ void ChipGrid::build(double dt) {
     // Cold plate lumped convection, shared uniformly by cell area.
     const ColdPlateParams& cp = p_.coldPlate;
     const double qRef = lpmToM3s(cp.qRefLpm);
-    const double hAcell = cp.hARef * std::pow(std::max(std::abs(qTotal), 1e-3 * qRef) / qRef, cp.hAExponent) / (nx * ny);
+    // Nu ~ Re^n Pr^(1/3)  =>  hA ~ Q^n rho^n mu^(1/3-n) k^(2/3) cp^(1/3), relative to water at 35 C.
+    const FluidProps pr = referenceWater(35.0);
+    const double n = cp.hAExponent;
+    const double propFactor = std::pow(pm.rho / pr.rho, n) * std::pow(pm.mu / pr.mu, 1.0 / 3.0 - n) *
+                              std::pow(pm.k / pr.k, 2.0 / 3.0) * std::pow(pm.cp / pr.cp, 1.0 / 3.0);
+    const double hAcell = cp.hARef * propFactor * std::pow(std::max(std::abs(qTotal), 1e-3 * qRef) / qRef, n) / (nx * ny);
 
     for (int j = 0; j < ny; ++j) {
         for (int i = 0; i < nx; ++i) {

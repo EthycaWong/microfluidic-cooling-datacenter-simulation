@@ -35,6 +35,8 @@ struct ViewerState {
     float load[8] = {1, 1, 1, 1, 1, 1, 1, 1};
     float loadAll = 1.0f;
     float viscosity = 1.0f;
+    int coolant = 0;           ///< 0 water, 1 PG25, 2 PG40, 3 EG25 (equipment loop)
+    int facilityCoolant = 0;   ///< 0 water, 1 PG30 (facility loop)
     float supplyT = 35.0f;
     int pumpMode = 1;          ///< 0 speed, 1 flow, 2 peak temperature
     float pumpSpeed = 0.94f;

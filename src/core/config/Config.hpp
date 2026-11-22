@@ -25,6 +25,8 @@ std::shared_ptr<Workload> makeWorkload(const WorkloadSpec& w);
 struct SimConfig {
     std::string level = "rack";       ///< chip | server | rack | plant (rack + CDU + dry cooler)
     double viscosityScale = 1.0;
+    std::string coolant = "water";          ///< equipment loop: water | PG25 | EG30 | PG25m ...
+    std::string facilityCoolant = "water";  ///< facility loop (outdoor dry cooler)
     ServerParams server;
     RackParams rack;
     PlantParams plant;

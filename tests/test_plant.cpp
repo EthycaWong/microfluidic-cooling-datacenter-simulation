@@ -111,3 +111,33 @@ TEST_CASE("Disabling the plant restores the fixed 35 C supply boundary") {
     CHECK(dc.rack().supplyT() == doctest::Approx(35.0));
     CHECK(dc.rack().returnT() == doctest::Approx(42.7).epsilon(0.2 / 42.7));
 }
+
+TEST_CASE("PG25 in the rack loop: valves still balance, heat balance closes, more flow needed for the limit") {
+    SimConfig c = defaultConfig();
+    // isothermal valve balance with PG25
+    ServerRig rig(c.server, makeCoolant("PG25"), 1.5, 35.0);
+    for (int b = 0; b < Server::kBranches; ++b) rig.server().chip(b).setPower(0.0);
+    rig.solveSteady();
+    const double rho = makeCoolant("PG25")->props(35.0).rho;
+    for (int b = 0; b < Server::kBranches; ++b)
+        CHECK(m3sToLpm(rig.server().branchFlow(b) / rho) == doctest::Approx(0.5).epsilon(0.01));
+
+    c.server.gpu.power.map.pattern = "hotspot";
+    Rack w(c.rack, c.server, water()), g(c.rack, c.server, makeCoolant("PG25"));
+    w.solveSteady();
+    g.solveSteady();
+    CHECK(std::abs(g.ledger().relResidual()) < 1e-6);
+    CHECK(g.hotspot().t > w.hotspot().t + 3.0); // lower k and cp: hotter at the same 12 L/min
+    CHECK(g.pumpHead() > 1.3 * w.pumpHead());   // more viscous: more pressure at the same flow
+}
+
+TEST_CASE("Facility-loop freeze check: water outdoors in frost is flagged, PG30 is not") {
+    SimConfig c = plantConfig(-5.0);
+    DataCenter a(c.rack, c.server, c.plant, water(), true, water());
+    DataCenter b(c.rack, c.server, c.plant, water(), true, makeCoolant("PG30"));
+    a.solveSteady();
+    b.solveSteady();
+    CHECK(a.plant().state().freezeRisk);
+    CHECK_FALSE(b.plant().state().freezeRisk);
+    CHECK(b.plant().state().facilityPumpPower > a.plant().state().facilityPumpPower); // glycol costs pumping
+}

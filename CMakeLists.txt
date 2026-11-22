@@ -28,6 +28,7 @@ FetchContent_MakeAvailable(nlohmann_json)
 # ---- Headless physics core ------------------------------------------------------------------
 add_library(mfcore STATIC
   src/core/fluid/WaterIAPWS.cpp
+  src/core/fluid/GlycolMixture.cpp
   src/core/hydraulics/RectChannel.cpp
   src/core/hydraulics/Edges.cpp
   src/core/hydraulics/HydraulicNetwork.cpp

@@ -24,7 +24,7 @@ struct ColdPlateParams {
     double baseThickness = 3e-3;   ///< copper base, m
     double kCopper = 390.0;        ///< W/(m K)
     double rhoCpCopper = 3.45e6;   ///< J/(m^3 K)
-    double hARef = 25.0;           ///< total fin-side conductance at qRef, W/K
+    double hARef = 25.0;           ///< total fin-side conductance at qRef with water at 35 C, W/K
     double qRefLpm = 0.5;
     double hAExponent = 0.5;       ///< hA ~ Q^n
     double fluidVolume = 3e-6;     ///< coolant volume inside the plate, m^3

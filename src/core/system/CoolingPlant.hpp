@@ -90,6 +90,7 @@ struct PlantState {
     double cduUA = 0, cduEffectiveness = 0, dryCoolerUA = 0, dryCoolerEffectiveness = 0;
     double fanSpeed = 1, fanPower = 0, chillerPower = 0, chillerCop = 0, facilityPumpPower = 0;
     double residual = 0;  ///< W, heat into loop - heat out - storage (exact only at steady state)
+    bool freezeRisk = false; ///< outdoor air within 2 K of the facility fluid's freezing point (dry cooler outdoors)
 };
 
 /// CDU + facility loop + dry cooler (+ trim chiller), coupled to the rack through the equipment
@@ -112,6 +113,9 @@ public:
     void setSetpoint(double c) { p_.supplySetpointC = c; }
     void setChillerEnabled(bool on) { p_.chiller.enabled = on; }
     void setFanSpeed(double s);
+    void setFacilityFluid(std::shared_ptr<const Fluid> f) { ff_ = std::move(f); }
+    const Fluid& facilityFluid() const { return *ff_; }
+    double facilityFreezingPointC() const;
     double facilityMdot() const;
     double coolingPower() const { return s_.fanPower + s_.chillerPower + s_.facilityPumpPower; }
 

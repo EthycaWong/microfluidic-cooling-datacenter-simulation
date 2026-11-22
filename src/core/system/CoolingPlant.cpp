@@ -82,12 +82,17 @@ void CoolingPlant::dryCoolerPerformance(double s, double tW, double, double& ua,
     const double mF = facilityMdot();
     const double mRef = refWater(30.0).rho * lpmToM3s(p_.facility.flowLpm);
     const double hAair = hAairRef * std::pow(std::max(s, 1e-3), d.airExponent);
-    const double hAw = hAwRef * std::pow(mF / mRef, d.waterExponent);
+    const double hAw = sideHA(hAwRef, mF, mRef, pw, refWater(30.0), d.waterExponent);
     ua = 1.0 / (1.0 / hAair + 1.0 / hAw);
     const double cAir = d.rhoAir * d.cpAir * d.maxAirflow * std::max(s, 1e-3);
     const double cW = mF * pw.cp;
     const double cmin = std::min(cAir, cW), cmax = std::max(cAir, cW);
     eps = hx::effectivenessCrossflow(ua / cmin, cmin / cmax, /*cminIsMixed=*/cAir < cW);
+}
+
+double CoolingPlant::facilityFreezingPointC() const {
+    if (auto g = dynamic_cast<const GlycolMixture*>(ff_.get())) return g->freezingPointC();
+    return 0.0; // water
 }
 
 double CoolingPlant::chillerCop(double tChilled, double tOut) const {
@@ -99,7 +104,11 @@ double CoolingPlant::chillerCop(double tChilled, double tOut) const {
 
 double CoolingPlant::facilityPumpPower() const {
     const FacilityParams& f = p_.facility;
-    const double dp = p_.cdu.facilityDpRefPa + p_.dryCooler.coilDpRefPa + f.pipingDpRefPa; // at design flow
+    // Design-flow pressure drop, specified for water; scaled to the facility fluid with an assumed
+    // 30 % laminar (proportional to mu) / 70 % inertial (proportional to rho) split.
+    const FluidProps pf = ff_->props(0.5 * (tFS_ + tFR_)), pw = refWater(30.0);
+    const double scale = 0.3 * pf.mu / pw.mu + 0.7 * pf.rho / pw.rho;
+    const double dp = (p_.cdu.facilityDpRefPa + p_.dryCooler.coilDpRefPa + f.pipingDpRefPa) * scale;
     return dp * lpmToM3s(f.flowLpm) / (f.pumpEta * f.motorEta);
 }
 
@@ -181,6 +190,7 @@ void CoolingPlant::step(double dt, double time, double mE, double rackReturnT) {
     s_.chillerCop = qCh > 0 ? chillerCop(chOut, tOut) : 0.0;
     s_.chillerPower = qCh > 0 ? qCh / s_.chillerCop : 0.0;
     s_.facilityPumpPower = facilityPumpPower();
+    s_.freezeRisk = tOut < facilityFreezingPointC() + 2.0;
     s_.residual = ce * (rackReturnT - tES_) - qDc - qCh - stor;
 }
 
@@ -280,6 +290,7 @@ void CoolingPlant::solveSteady(double time, double mE, double q) {
     s_.chillerCop = r.qCh > 0 ? chillerCop(r.tFS, tOut) : 0.0;
     s_.chillerPower = r.qCh > 0 ? r.qCh / s_.chillerCop : 0.0;
     s_.facilityPumpPower = facilityPumpPower();
+    s_.freezeRisk = tOut < facilityFreezingPointC() + 2.0;
     s_.residual = q - r.qDc - r.qCh;
 }
 

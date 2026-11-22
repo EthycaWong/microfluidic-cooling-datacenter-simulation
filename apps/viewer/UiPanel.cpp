@@ -103,16 +103,18 @@ void drawControlPanel(App& app, Rectangle a) {
     if (s.profile == 0) {
         if (slider(s, "All servers", f1("%.0f%%", 100 * s.loadAll), x, y, w, &s.loadAll, 0.0f, 1.0f))
             for (int k = 0; k < 8; ++k) s.load[k] = s.loadAll;
-        for (int k = 7; k >= 0; --k) {
-            char name[24];
-            std::snprintf(name, sizeof name, "  Server %d", k + 1);
-            const float before = s.load[k];
-            drawText(s, name, x, y + 1, 14, kDim);
-            GuiSlider({x + 112, y, w - 112 - 62, 16}, nullptr, nullptr, &s.load[k], 0.0f, 1.0f);
-            drawText(s, f1("%.0f%%", 100 * s.load[k]), x + w - 56, y + 1, 14, kDim);
-            if (s.load[k] != before) app.manual[k]->set(s.load[k]);
-            y += 19;
+        // Two columns (top server first) to keep the panel compact.
+        const float colW = (w - 10) / 2;
+        for (int n = 0; n < 8; ++n) {
+            const int k = 7 - n;
+            const float cx = x + (n % 2) * (colW + 10), cy = y + (n / 2) * 21;
+            char name[8];
+            std::snprintf(name, sizeof name, "S%d", k + 1);
+            drawText(s, name, cx, cy + 1, 14, kDim);
+            GuiSlider({cx + 24, cy, colW - 24 - 40, 16}, nullptr, nullptr, &s.load[k], 0.0f, 1.0f);
+            drawText(s, f1("%.0f%%", 100 * s.load[k]), cx + colW - 36, cy + 1, 14, kDim);
         }
+        y += 4 * 21 + 2;
         for (int k = 0; k < 8; ++k) app.manual[k]->set(s.load[k]);
     } else {
         drawText(s, "u alternates 20% / 100% every 10 s", x, y, 14, kDim);
@@ -121,8 +123,16 @@ void drawControlPanel(App& app, Rectangle a) {
 
     // ---- coolant ----
     heading(s, "Coolant", x, y, w);
+    static const char* kCoolants[] = {"water", "PG25", "PG40", "EG25"};
+    int cool = s.coolant;
+    GuiToggleGroup({x, y, (w - 12) / 4, 24}, "Water;PG25;PG40;EG25", &cool);
+    if (cool != s.coolant) {
+        s.coolant = cool;
+        r.setCoolant(mf::makeCoolant(kCoolants[cool]));
+    }
+    y += 30;
     if (slider(s, "Viscosity", f1("%.2fx", s.viscosity), x, y, w, &s.viscosity, 0.5f, 5.0f)) r.setViscosityScale(s.viscosity);
-    drawText(s, "viscosity only; rho, cp, k stay water's", x, y, 13, kDim);
+    drawText(s, "multiplier scales viscosity only (glycols: real data)", x, y, 13, kDim);
     y += 20;
 
     // ---- cooling plant ----
@@ -136,6 +146,14 @@ void drawControlPanel(App& app, Rectangle a) {
             app.dc->plant().setSetpoint(s.setpoint);
         if (slider(s, "Outdoor air", f1("%.0f \xC2\xB0""C", s.outdoor), x, y, w, &s.outdoor, -10.0f, 45.0f))
             app.dc->plant().setOutdoorMean(s.outdoor);
+        drawText(s, "Facility fluid", x, y + 4, 15, kInk);
+        int fc = s.facilityCoolant;
+        GuiToggleGroup({x + 112, y, (w - 112 - 4) / 2, 24}, "Water;PG30", &fc);
+        if (fc != s.facilityCoolant) {
+            s.facilityCoolant = fc;
+            app.dc->plant().setFacilityFluid(mf::makeCoolant(fc == 0 ? "water" : "PG30"));
+        }
+        y += 30;
         bool ch = s.chiller;
         GuiToggle({x, y, w, 24}, ch ? "Trim chiller allowed" : "Trim chiller off (dry cooler only)", &ch);
         if (ch != s.chiller) { s.chiller = ch; app.dc->plant().setChillerEnabled(ch); }
@@ -206,6 +224,14 @@ void drawReadouts(App& app, Rectangle a) {
     row(s, "Server flow spread", f1("%.2f %%", 100 * r.flowMaldistribution()), x, y, w);
     row(s, "Energy residual", f1("%.1e W", l.residual()), x, y, w);
     row(s, "Pump / fan energy", f1("%.2f", r.pumpEnergy() / 1e3) + f1(" / %.2f kJ", r.fanEnergy() / 1e3), x, y, w);
+    {
+        std::string cn = r.coolant().name();
+        for (auto [from, to] : {std::pair<std::string, std::string>{"Propylene glycol", "PG"}, {"Ethylene glycol", "EG"}, {" (Melinder)", ""}}) {
+            const auto pos = cn.find(from);
+            if (pos != std::string::npos) cn.replace(pos, from.size(), to);
+        }
+        row(s, "Coolant", cn, x, y, w);
+    }
     row(s, "Viscosity / layout", f1("%.2fx", r.viscosityScale()) + "  /  " + mf::toString(r.params().layout), x, y, w);
     if (app.dc->plantEnabled()) {
         const mf::PlantState& p = app.dc->plant().state();
@@ -214,6 +240,7 @@ void drawReadouts(App& app, Rectangle a) {
         row(s, "Dry-cooler fans", f1("%.0f%%", 100 * p.fanSpeed) + f1("  %.1f W", p.fanPower), x, y, w);
         row(s, "Trim chiller", f1("%.1f W", p.chillerPower) + (p.chillerHeat > 1 ? f1("  (COP %.1f)", p.chillerCop) : ""), x, y, w);
         row(s, "Facility pump", f1("%.1f W", p.facilityPumpPower), x, y, w);
+        if (p.freezeRisk) row(s, "FREEZE RISK", "facility fluid near freezing", x, y, w, Color{255, 110, 110, 255});
     } else {
         row(s, "Plant", "off: supply held fixed", x, y, w, kDim);
     }

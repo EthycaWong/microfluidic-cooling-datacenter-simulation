@@ -110,6 +110,11 @@ FluidProps WaterIAPWS::propsExact(double tC) const {
     return FluidProps{rho, viscosity2008(T, rho), if97Cp(T, p_), conductivity2011(T, rho)};
 }
 
+FluidProps referenceWater(double tC) {
+    static const WaterIAPWS w;
+    return w.props(tC);
+}
+
 FluidProps WaterIAPWS::props(double tC) const {
     const double x = (std::clamp(tC, kTmin, kTmax) - kTmin) / kStep;
     const int i = std::min(static_cast<int>(x), static_cast<int>(table_.size()) - 2);

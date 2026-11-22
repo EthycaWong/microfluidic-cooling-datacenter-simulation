@@ -81,6 +81,6 @@
     <text x="0" y="22" font-weight="bold">Water reported:</text>
     <text x="130" y="22">0 L/h evaporated in operation, alongside what an evaporative tower would use for the same heat (≈ 9.5 L/h at 6.4 kW).</text>
     <text x="0" y="44" font-weight="bold">Not included:</text>
-    <text x="130" y="44">glycol in the facility loop (needs mixture data), the 1.6 kW air-cooled load's room HVAC, humidity, part-load fan + chiller optimisation.</text>
+    <text x="130" y="44">inhibitor effects on glycol viscosity, the 1.6 kW air-cooled load's room HVAC, humidity, part-load fan + chiller optimisation.</text>
   </g>
 </svg>

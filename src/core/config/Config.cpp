@@ -124,7 +124,11 @@ SimConfig defaultConfig() {
 void applyConfigJson(SimConfig& c, const std::string& text) {
     const json j = json::parse(text, nullptr, true, /*ignore_comments=*/true);
     get(j, "level", c.level);
-    if (j.contains("fluid")) get(j["fluid"], "viscosity_scale", c.viscosityScale);
+    if (j.contains("fluid")) {
+        get(j["fluid"], "viscosity_scale", c.viscosityScale);
+        get(j["fluid"], "coolant", c.coolant);
+        get(j["fluid"], "facility_coolant", c.facilityCoolant);
+    }
     if (j.contains("gpu")) readChip(j["gpu"], c.server.gpu);
     if (j.contains("cpu")) readChip(j["cpu"], c.server.cpu);
     if (j.contains("air")) {

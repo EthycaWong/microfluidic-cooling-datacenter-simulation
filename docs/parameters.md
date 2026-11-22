@@ -108,11 +108,11 @@ Run it with `--level plant` or [`configs/plant_baseline.json`](../configs/plant_
 | Outdoor °C | Dry-cooler fans | Chiller electric | Cooling electric | Partial PUE | Supply °C |
 |---|---|---|---|---|---|
 | 0 | 10 % (min) | 0 W | 56 W | 1.007 | 29.4 (below setpoint) |
-| 20 | 23 % | 0 W | 60 W | 1.007 | 35.0 |
-| 25 | 41 % | 0 W | 85 W | 1.011 | 35.0 |
-| 28 | 79 % | 0 W | 277 W | 1.034 | 35.0 |
-| 30 | 100 % | 94 W | 599 W | 1.074 | 35.0 |
-| 35 | bypassed | 809 W | 864 W | 1.107 | 35.0 |
+| 20 | 23 % | 0 W | 59 W | 1.007 | 35.0 |
+| 25 | 41 % | 0 W | 84 W | 1.010 | 35.0 |
+| 28 | 78 % | 0 W | 267 W | 1.033 | 35.0 |
+| 30 | 100 % | 92 W | 595 W | 1.074 | 35.0 |
+| 35 | bypassed | 809 W | 863 W | 1.107 | 35.0 |
 | 40 | bypassed | 1023 W | 1077 W | 1.134 | 35.0 |
 
 With the chiller off, the supply temperature floats up instead: 41 °C at 35 °C outdoor, where the hottest chip reaches 87.8 °C. An evaporative tower rejecting the same 6.4 kW would evaporate about 9.5 L/h; the dry-cooler loop evaporates none. The cost of that water saving is the fan and chiller electricity on hot days ([9]).
@@ -166,19 +166,62 @@ What this shows so far:
 
 | μ | CDU UA | Rack pump | Dry-cooler fans | Chiller | **Cooling total** | Partial PUE |
 |---|---|---|---|---|---|---|
-| 1×, 25 °C | 1369 W/K | 14.7 W | 25.4 W | 0 W | **71.2 W** | 1.0088 |
-| 2×, 25 °C | 1235 W/K | 21.8 W | 32.0 W | 0 W | **84.9 W** | 1.0106 |
-| 4×, 25 °C | 1104 W/K | 37.5 W | 43.6 W | 0 W | **112.2 W** | 1.0139 |
-| 1×, 30 °C | 1369 W/K | 14.7 W | 450 W | 64.8 W | **560.6 W** | 1.0697 |
-| 4×, 30 °C | 1104 W/K | 37.5 W | 450 W | 142.5 W | **661.1 W** | 1.0821 |
+| 1×, 25 °C | 1369 W/K | 14.7 W | 24.7 W | 0 W | **69.6 W** | 1.0087 |
+| 2×, 25 °C | 1235 W/K | 21.8 W | 31.2 W | 0 W | **83.3 W** | 1.0103 |
+| 4×, 25 °C | 1104 W/K | 37.5 W | 42.5 W | 0 W | **110.4 W** | 1.0137 |
+| 1×, 30 °C | 1369 W/K | 14.7 W | 450 W | 61.8 W | **556.7 W** | 1.0692 |
+| 4×, 30 °C | 1104 W/K | 37.5 W | 450 W | 140.2 W | **658.1 W** | 1.0818 |
 
-The plant level adds a second viscosity penalty that the rack-only model could not show. A thicker coolant lowers the CDU's equipment-side conductance (UA −19 % at 4×), so the facility loop must supply colder water to hold the same 35 °C supply. On a mild day that shows up as extra dry-cooler fan power. On a warm day it shows up as extra chiller power, which is larger. At 4× viscosity the extra cooling electricity is +41 W at 25 °C (+23 W pump, +18 W fans) and +100 W at 30 °C (+23 W pump, +78 W chiller).
+The plant level adds a second viscosity penalty that the rack-only model could not show. A thicker coolant lowers the CDU's equipment-side conductance (UA −19 % at 4×), so the facility loop must supply colder water to hold the same 35 °C supply. On a mild day that shows up as extra dry-cooler fan power. On a warm day it shows up as extra chiller power, which is larger. At 4× viscosity the extra cooling electricity is +41 W at 25 °C (+23 W pump, +18 W fans) and +101 W at 30 °C (+23 W pump, +78 W chiller).
+
+## 7c. Practical coolant comparison (water vs glycol mixtures)
+
+The second experiment in the proposal compares real coolants, each with its own temperature-dependent viscosity, density, heat capacity and conductivity.
+
+**Property source.** Aqueous propylene glycol (PG) and ethylene glycol (EG) use the Melinder (2010) correlations (A4), with the polynomial coefficients CoolProp distributes (A5, MIT licence). These are mixture-specific data; the IAPWS pure-water formulations are never substituted ([11], [12]). Coolants are named by volume percent as usually specified (PG25 = 25 % by volume = 25.7 % by mass); a trailing `m` means mass percent (`PG30m`). Volume-to-mass conversion neglects mixing contraction (about 1 %).
+
+**Checks.**
+- At zero concentration the correlations match IAPWS water within 0.2 % for density, 0.6 % for viscosity, and 0.3 % for c_p and k (unit test).
+- 30 % (mass) PG is predicted to freeze at −12.8 °C, close to the familiar −12.7 °C table value.
+- The 30 % PG specific heat (3.86–3.91 kJ/kg·K at 20–40 °C) agrees with a secondary table (≈ 3.9 kJ/kg·K).
+- The viscosity of 30 % (volume) PG at 0 °C (≈ 7.3 mPa·s) agrees with an ASHRAE-based sheet (≈ 7.1 cP).
+
+**Uncertainty.** Published glycol viscosities differ by up to about 20 % between data sets below 40 wt-%, and inhibitor packages change them further. Treat glycol pump-power results as ±20 %.
+
+| Coolant | Freezes at | μ at 40 °C | c_p at 40 °C | k at 40 °C | GPU flow to hold 85 °C |
+|---|---|---|---|---|---|
+| Water | 0 °C | 0.65 mPa·s | 4178 J/kg·K | 0.629 W/m·K | 0.41 L/min |
+| PG25 | −10.2 °C | 1.38 mPa·s | 3961 J/kg·K | 0.482 W/m·K | 0.64 L/min |
+| PG40 | −21.4 °C | 2.20 mPa·s | 3757 J/kg·K | 0.409 W/m·K | 0.88 L/min |
+| EG25 | −12.4 °C | 1.20 mPa·s | 3824 J/kg·K | 0.496 W/m·K | 0.62 L/min |
+
+Rack level, holding the hottest chip at 85 °C (`mfsim coolant-compare --config configs/rack_baseline.json`). At a fixed 12 L/min instead, the peak reaches 88.9 °C with PG25, 94.5 °C with PG40 and 88.6 °C with EG25.
+
+| Coolant | Rack flow | Pump head | Rack pump |
+|---|---|---|---|
+| Water | 10.1 L/min | 39 kPa | 14.7 W |
+| PG25 | 14.9 L/min | 108 kPa | 59.7 W |
+| PG40 | 19.7 L/min | 220 kPa | 161 W |
+| EG25 | 14.6 L/min | 97 kPa | 52.5 W |
+
+Plant level at 25 °C outdoor, holding 85 °C (`mfsim coolant-compare --config configs/plant_baseline.json`):
+
+| Coolant | CDU UA | Dry-cooler fans | **Cooling total** | Partial PUE |
+|---|---|---|---|---|
+| Water | 1369 W/K | 24.7 W | **69.6 W** | 1.0087 |
+| PG25 | 1247 W/K | 60.5 W | **150.7 W** | 1.0187 |
+| PG40 | 1184 W/K | 118.5 W | **310.6 W** | 1.0386 |
+| EG25 | 1279 W/K | 51.7 W | **134.7 W** | 1.0167 |
+
+**What this adds to the viscosity-only result (§7).** In the viscosity-only experiment, holding 85 °C needed the same flow at any viscosity. With real glycols it does not. Their lower thermal conductivity (−23 % for PG25) and lower c_p reduce microchannel heat transfer, so PG25 needs about 55 % more flow at the GPUs. That flow is also pushed through a more viscous fluid. The two effects compound: PG25 costs about 4× the rack pump power of water and about 2.2× the total cooling electricity.
+
+**Glycol in the facility loop.** The dry cooler sits outdoors, so plain water there can freeze. The plant flags a freeze risk when outdoor air comes within 2 K of the facility fluid's freezing point (water at −5 °C: flagged; PG30: not flagged). The protection costs electricity. At 25 °C outdoor, PG30 in the facility loop raises plant electricity from 84 W to 166 W: higher facility pumping, a lower CDU UA, and more dry-cooler fan power.
 
 ## 8. Not in this milestone
 
-- Glycol in the facility loop (freeze protection), and room HVAC for the 1.6 kW air-cooled load. Water-use statements cover only the liquid loop.
+- Room HVAC for the 1.6 kW air-cooled load. Water-use statements cover only the liquid loop.
 - Part-load optimisation of fans plus chiller together (the model uses either full fans with trim chilling, or a full bypass). Humidity, and pump and fan curves beyond simple affinity laws.
-- Expansion-vessel dynamics. Glycol coolants need mixture-specific property data; the IAPWS pure-water formulations are not substituted ([11], [12]).
+- Expansion-vessel dynamics. Glycol inhibitor packages (they change viscosity), and coolants other than PG and EG.
 - Qu & Mudawar benchmark ([3]). The geometry can be configured, but the comparison needs data points taken from the paper.
 - The CNN workload driving u(t) ([13]); the `Workload` interface is ready for it.
 - Header flow maldistribution across the 50 channels (flow is assumed equal per channel), the simultaneously developing Nusselt number, and thermosiphon effects.
@@ -188,3 +231,5 @@ The plant level adds a second viscosity penalty that the rack-only model could n
 - **A1** R. K. Shah and A. L. London, *Laminar Flow Forced Convection in Ducts*, Academic Press, 1978. Rectangular-duct f·Re, K(∞), three-wall Nu and thermal-entrance solutions.
 - **A2** S. W. Churchill, "Friction-factor equation spans all fluid-flow regimes," *Chemical Engineering* 84 (24), 1977.
 - **A3** IAPWS R7-97(2012) (IF97), IAPWS R12-08 (viscosity), IAPWS R15-11 (thermal conductivity). Implemented and checked against the releases' verification tables (these are the proposal's [11] and [12]).
+- **A4** Å. Melinder, *Properties of Secondary Working Fluids for Indirect Systems*, 2nd ed., International Institute of Refrigeration (IIR), 2010. Aqueous propylene and ethylene glycol correlations.
+- **A5** CoolProp incompressible-liquid fits `MPG` and `MEG` (`dev/incompressible_liquids/json/`, github.com/CoolProp/CoolProp, MIT licence): polynomial coefficients in (T − T_base) and (x − x_base), with x the glycol mass fraction.

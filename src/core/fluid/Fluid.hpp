@@ -49,6 +49,37 @@ private:
     std::vector<FluidProps> table_;
 };
 
+/// Aqueous propylene- or ethylene-glycol coolant from the Melinder (2010) correlations (IIR
+/// "Properties of Secondary Working Fluids for Indirect Systems"), using the polynomial
+/// coefficients distributed by CoolProp. Mixture-specific data: pure-water IAPWS formulations are
+/// never substituted. Valid for mass fraction 0-0.6 and temperatures above the freezing point.
+class GlycolMixture final : public Fluid {
+public:
+    enum class Kind { Propylene, Ethylene };
+    GlycolMixture(Kind kind, double massFraction);
+    FluidProps props(double tC) const override;
+    std::string name() const override;
+    FluidProps propsExact(double tC) const;
+    double freezingPointC() const;
+    double massFraction() const { return x_; }
+    Kind kind() const { return kind_; }
+    /// Mass fraction from a volume fraction (how coolants are usually specified, e.g. PG25).
+    static double massFromVolumeFraction(Kind kind, double volumeFraction);
+
+private:
+    Kind kind_;
+    double x_;
+    static constexpr double kTmin = -30.0, kTmax = 100.0, kStep = 0.1;
+    std::vector<FluidProps> table_;
+};
+
+/// Plain IAPWS water at tC, cached. Component curves (quick disconnects, cold plates, HX, filter)
+/// are specified for water; this is their reference state, whatever coolant is actually loaded.
+FluidProps referenceWater(double tC);
+
+/// "water", "PG25", "EG30" (volume %), or "PG25m" (mass %).
+std::shared_ptr<const Fluid> makeCoolant(const std::string& spec);
+
 /// Wraps another fluid and multiplies only its viscosity by a factor (1x, 2x, 4x ...).
 /// Used for the "isolate viscosity" experiment: density, cp and k stay those of the base fluid.
 class ScaledFluid final : public Fluid {
@@ -62,6 +93,8 @@ public:
     }
     std::string name() const override { return base_->name() + " x" + std::to_string(scale_) + " mu"; }
     void setScale(double s) { scale_ = s; }
+    void setBase(std::shared_ptr<const Fluid> b) { base_ = std::move(b); }
+    const Fluid& base() const { return *base_; }
     double scale() const { return scale_; }
 
 private:
