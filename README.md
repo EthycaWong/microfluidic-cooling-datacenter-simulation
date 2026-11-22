@@ -16,13 +16,14 @@ A C++ simulation with a 3D viewer of a liquid-cooled 42U rack. It is built up fr
 | **Chip** | 20 × 20 mm die with 50 microchannels (200 × 500 µm). A 10 × 10 thermal RC grid with backward-Euler time stepping; coolant warms along the channels. Laminar developing-flow pressure drop and heat transfer with rib fin efficiency. |
 | **Server** | Two 300 W microchannel GPUs and one 200 W cold-plate CPU in parallel branches with hoses, quick disconnects and balancing valves. Branch flows are solved from pressure balance. A 200 W air-cooled group with fan power. |
 | **Rack** | 8 × 4U servers between rear supply and return manifolds (direct or reverse return), a pump curve with affinity laws and an efficiency curve, and three pump modes: fixed speed, fixed flow, or PI control on the hottest chip. A placeholder CDU resistance, hydrostatics, per-server workloads and a mixed return temperature. |
-| **Energy** | Heat-balance residuals at chip, server and rack level, pump and fan electricity, and cumulative energy. |
+| **Cooling plant** | CDU plate heat exchanger (ε-NTU, conductance falls with coolant viscosity) feeding a sealed facility loop, an outdoor dry cooler with PI-controlled fans and bypass, and an optional trim chiller. Loop thermal mass, constant or daily-sine outdoor air. |
+| **Energy** | Heat-balance residuals at every level, rack and facility pumps, dry-cooler fans, chiller, partial PUE, and water: 0 L/h evaporated, compared with what an evaporative tower would use. |
 
-Parameter tables, boundary conditions, assumptions and the hand calculations are in **[docs/parameters.md](docs/parameters.md)**. Labelled schematics: [chip](docs/schematics/chip.svg), [server](docs/schematics/server.svg), [rack](docs/schematics/rack.svg).
+Parameter tables, boundary conditions, assumptions and the hand calculations are in **[docs/parameters.md](docs/parameters.md)**. Labelled schematics: [chip](docs/schematics/chip.svg), [server](docs/schematics/server.svg), [rack](docs/schematics/rack.svg), [cooling plant](docs/schematics/plant.svg).
 
 **Not yet modelled:**
-- the CDU heat exchanger, facility loop and dry cooler (the supply is held at 35 °C for now);
-- glycol coolants;
+- glycol coolants (they need mixture property data);
+- room HVAC for the air-cooled load;
 - the CNN workload. The `Workload` interface is ready for it.
 
 ## Build
@@ -46,7 +47,7 @@ To build only the headless parts, add `-DMF_BUILD_VIEWER=OFF`.
 ## Run the 3D viewer
 
 ```bash
-./build/mfsim_viewer --config configs/rack_baseline.json
+./build/mfsim_viewer --config configs/plant_baseline.json
 ```
 
 | Action | How |
@@ -58,7 +59,8 @@ To build only the headless parts, add `-DMF_BUILD_VIEWER=OFF`.
 
 The left panel controls:
 - the per-server load, or a square-wave workload;
-- coolant viscosity and supply temperature;
+- coolant viscosity;
+- the cooling plant: on/off, supply setpoint, outdoor air temperature, and the trim chiller;
 - the pump mode and its target;
 - the manifold layout and the balancing valves.
 
@@ -87,19 +89,33 @@ The right panel shows live flows, pressures, temperatures, pump and fan power, a
 ```
 
 ```bash
+./build/mfsim steady --config configs/plant_baseline.json
+```
+
+```bash
+./build/mfsim climate-sweep --config configs/plant_baseline.json
+```
+
+```bash
+./build/mfsim sweep-viscosity --config configs/plant_baseline.json --outdoor 30
+```
+
+```bash
 ./build/mfsim run --config configs/rack_square_wave.json --duration 60 --dt 0.01
 ```
 
-`--level chip|server|rack` changes the level of any config. Every command writes a CSV to `results/`.
+`--level chip|server|rack|plant` changes the level of any config; `--outdoor C` and `--chiller off` override the plant settings. Every command writes a CSV to `results/`.
 
 ## First findings
 
-These are preliminary: the CDU and filter curves are placeholders.
+These are preliminary: CDU, dry-cooler and pump sizes are assumptions (see the parameters doc).
 
 - The model reproduces the proposal's hand numbers: Re ≈ 660, channel Δp ≈ 13.5 kPa, GPU outlet 43.7 °C, and a mixed rack return of 42.70 °C for 6.4 kW at 12 L/min.
 - **At a given flow, viscosity does not change chip temperatures**, because Re·Pr contains no μ. It changes pumping power instead. Holding the hottest chip at 85 °C takes about 10.1 L/min at 1×, 2× and 4× viscosity, while pump power rises from 14.7 W to 21.8 W to 37.5 W.
 - If the pump isn't re-adjusted, 4× viscosity cuts flow to 8.2 L/min and the hottest chip reaches 89.4 °C.
 - Direct-return manifolds give the top server the least flow (2 % spread). Reverse return evens this out (0.7 %).
+- **With the cooling plant**, thicker coolant also weakens the CDU heat exchanger (UA −19 % at 4×), so the facility side must run colder. Holding 85 °C at 4× viscosity raises total cooling electricity from 71 W to 112 W at 25 °C outdoor, and from 561 W to 661 W at 30 °C (mostly chiller).
+- **The dry cooler evaporates no water.** An evaporative tower would use about 9.5 L/h for the same 6.4 kW. The cost is electricity on hot days: partial PUE is 1.011 at 25 °C outdoor, 1.074 at 30 °C and 1.134 at 40 °C (chiller-assisted).
 
 ## Layout
 

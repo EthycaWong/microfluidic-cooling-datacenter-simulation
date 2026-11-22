@@ -1,4 +1,5 @@
 #pragma once
+#include "system/DataCenter.hpp"
 #include "system/Rack.hpp"
 #include "system/Server.hpp"
 #include "workload/Workload.hpp"
@@ -22,10 +23,11 @@ std::shared_ptr<Workload> makeWorkload(const WorkloadSpec& w);
 /// Everything needed to build a chip, server or rack simulation. Defaults in code are the
 /// proposal's baseline values; JSON files override any subset (keys carry their units).
 struct SimConfig {
-    std::string level = "rack";       ///< chip | server | rack
+    std::string level = "rack";       ///< chip | server | rack | plant (rack + CDU + dry cooler)
     double viscosityScale = 1.0;
     ServerParams server;
     RackParams rack;
+    PlantParams plant;
     double chipFlowLpm = 0.5;         ///< chip rig flow
     double chipInletC = 35.0;
     double serverFlowLpm = 1.5;       ///< server rig total flow

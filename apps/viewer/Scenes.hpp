@@ -1,6 +1,6 @@
 #pragma once
 #include "raylib.h"
-#include "system/Rack.hpp"
+#include "system/DataCenter.hpp"
 
 #include <deque>
 #include <string>
@@ -27,6 +27,10 @@ struct ViewerState {
     int branch = 0;            ///< selected chip in the server (0 GPU1, 1 GPU2, 2 CPU)
     bool paused = false;
     float simSpeed = 1.0f;     ///< simulated seconds per real second
+    bool plant = true;         ///< CDU + dry cooler model on (off = fixed supply temperature)
+    float outdoor = 25.0f;
+    float setpoint = 35.0f;
+    bool chiller = true;
     int profile = 0;           ///< 0 manual, 1 square wave, 2 staggered square
     float load[8] = {1, 1, 1, 1, 1, 1, 1, 1};
     float loadAll = 1.0f;
@@ -50,10 +54,12 @@ struct ViewerState {
 
 // Temperature colour scales shared by every scene and the legend.
 constexpr double kSiliconLo = 35.0, kSiliconHi = 90.0;
-constexpr double kCoolantLo = 34.0, kCoolantHi = 48.0;
+constexpr double kCoolantLo = 28.0, kCoolantHi = 48.0;
 Color heatColor(double t, double lo, double hi);
 
 void drawRack3D(const mf::Rack& r, ViewerState& s);
+/// Outdoor dry cooler, trim chiller and facility piping next to the rack (plant enabled).
+void drawPlant3D(const mf::DataCenter& dc, ViewerState& s);
 void drawServer3D(const mf::Rack& r, ViewerState& s);
 void drawChip3D(const mf::Rack& r, ViewerState& s);
 /// Bounding box of server k in the rack scene, for mouse picking.

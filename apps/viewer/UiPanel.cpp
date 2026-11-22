@@ -92,7 +92,7 @@ void drawControlPanel(App& app, Rectangle a) {
     if (GuiButton({x + 98, y, 120, 26}, "Steady state")) app.requestSteady = true;
     if (GuiButton({x + 226, y, w - 226, 26}, "Reset view")) app.requestFrame = true;
     y += 34;
-    slider(s, "Speed", f1("%.1fx", s.simSpeed), x, y, w, &s.simSpeed, 0.1f, 10.0f);
+    slider(s, "Speed", f1("%.1fx", s.simSpeed), x, y, w, &s.simSpeed, 0.1f, 60.0f);
 
     // ---- workload ----
     heading(s, "Workload (activity u)", x, y, w);
@@ -111,7 +111,7 @@ void drawControlPanel(App& app, Rectangle a) {
             GuiSlider({x + 112, y, w - 112 - 62, 16}, nullptr, nullptr, &s.load[k], 0.0f, 1.0f);
             drawText(s, f1("%.0f%%", 100 * s.load[k]), x + w - 56, y + 1, 14, kDim);
             if (s.load[k] != before) app.manual[k]->set(s.load[k]);
-            y += 21;
+            y += 19;
         }
         for (int k = 0; k < 8; ++k) app.manual[k]->set(s.load[k]);
     } else {
@@ -122,9 +122,28 @@ void drawControlPanel(App& app, Rectangle a) {
     // ---- coolant ----
     heading(s, "Coolant", x, y, w);
     if (slider(s, "Viscosity", f1("%.2fx", s.viscosity), x, y, w, &s.viscosity, 0.5f, 5.0f)) r.setViscosityScale(s.viscosity);
-    if (slider(s, "Supply temp", f1("%.1f \xC2\xB0""C", s.supplyT), x, y, w, &s.supplyT, 20.0f, 45.0f)) r.setSupplyT(s.supplyT);
     drawText(s, "viscosity only; rho, cp, k stay water's", x, y, 13, kDim);
     y += 20;
+
+    // ---- cooling plant ----
+    heading(s, "Cooling plant (CDU + dry cooler)", x, y, w);
+    int plantMode = s.plant ? 1 : 0;
+    GuiToggleGroup({x, y, (w - 4) / 2, 26}, "Fixed supply;CDU + dry cooler", &plantMode);
+    if ((plantMode == 1) != s.plant) { s.plant = plantMode == 1; app.dc->setPlantEnabled(s.plant); }
+    y += 34;
+    if (s.plant) {
+        if (slider(s, "Supply setpoint", f1("%.1f \xC2\xB0""C", s.setpoint), x, y, w, &s.setpoint, 20.0f, 45.0f))
+            app.dc->plant().setSetpoint(s.setpoint);
+        if (slider(s, "Outdoor air", f1("%.0f \xC2\xB0""C", s.outdoor), x, y, w, &s.outdoor, -10.0f, 45.0f))
+            app.dc->plant().setOutdoorMean(s.outdoor);
+        bool ch = s.chiller;
+        GuiToggle({x, y, w, 24}, ch ? "Trim chiller allowed" : "Trim chiller off (dry cooler only)", &ch);
+        if (ch != s.chiller) { s.chiller = ch; app.dc->plant().setChillerEnabled(ch); }
+        y += 30;
+    } else {
+        if (slider(s, "Supply temp", f1("%.1f \xC2\xB0""C", s.supplyT), x, y, w, &s.supplyT, 20.0f, 45.0f))
+            app.dc->setFixedSupply(s.supplyT);
+    }
 
     // ---- pump ----
     heading(s, "Pump control", x, y, w);
@@ -188,6 +207,19 @@ void drawReadouts(App& app, Rectangle a) {
     row(s, "Energy residual", f1("%.1e W", l.residual()), x, y, w);
     row(s, "Pump / fan energy", f1("%.2f", r.pumpEnergy() / 1e3) + f1(" / %.2f kJ", r.fanEnergy() / 1e3), x, y, w);
     row(s, "Viscosity / layout", f1("%.2fx", r.viscosityScale()) + "  /  " + mf::toString(r.params().layout), x, y, w);
+    if (app.dc->plantEnabled()) {
+        const mf::PlantState& p = app.dc->plant().state();
+        row(s, "Outdoor / facility sup-ret", f1("%.1f", p.outdoorT) + f1("  /  %.1f", p.facilitySupplyT) +
+                                                 f1("-%.1f \xC2\xB0""C", p.facilityReturnT), x, y, w);
+        row(s, "Dry-cooler fans", f1("%.0f%%", 100 * p.fanSpeed) + f1("  %.1f W", p.fanPower), x, y, w);
+        row(s, "Trim chiller", f1("%.1f W", p.chillerPower) + (p.chillerHeat > 1 ? f1("  (COP %.1f)", p.chillerCop) : ""), x, y, w);
+        row(s, "Facility pump", f1("%.1f W", p.facilityPumpPower), x, y, w);
+    } else {
+        row(s, "Plant", "off: supply held fixed", x, y, w, kDim);
+    }
+    row(s, "Cooling electricity", f1("%.1f W", app.dc->coolingPower()), x, y, w, Color{110, 170, 255, 255});
+    row(s, "Partial PUE (modelled)", f1("%.4f", app.dc->partialPue()), x, y, w);
+    row(s, "Water evaporated", f1("0 L/h  (tower: %.1f L/h)", app.dc->evaporativeEquivalentLph()), x, y, w);
 
     // Selected chip details.
     const mf::Server& sv = r.server(s.server);

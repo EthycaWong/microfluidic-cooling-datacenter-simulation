@@ -8,6 +8,7 @@
 namespace viewer {
 
 struct App {
+    mf::DataCenter* dc = nullptr;
     mf::Rack* rack = nullptr;
     std::vector<std::shared_ptr<mf::ConstantWorkload>> manual;
     ViewerState s;

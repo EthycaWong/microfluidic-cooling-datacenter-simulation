@@ -93,7 +93,7 @@ void Rack::buildNetwork() {
     filterEdge_ = net_->addEdge(cduIn, filterOut,
         std::make_unique<RefLoss>("filter", rp_.filterDpRefPa, lpmToM3s(rp_.filterQRefLpm), rp_.filterLaminarFraction, ref));
     hxEdge_ = net_->addEdge(filterOut, pumpIn_,
-        std::make_unique<RefLoss>("CDU heat exchanger (placeholder)", rp_.hxDpRefPa, lpmToM3s(rp_.hxQRefLpm), rp_.hxLaminarFraction, ref));
+        std::make_unique<RefLoss>("CDU heat exchanger (equipment side)", rp_.hxDpRefPa, lpmToM3s(rp_.hxQRefLpm), rp_.hxLaminarFraction, ref));
     net_->setReference(pumpIn_, rp_.referencePressurePa);
 
     for (auto& s : servers_) s.autoBalance(*net_);

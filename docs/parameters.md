@@ -1,8 +1,8 @@
 # Parameters, boundary conditions and assumptions
 
-This page lists every input of the current milestone (chip → server → rack). Values tagged **ASSUMED** are study assumptions, not measurements; replace them as better data arrives. All of them live in [`configs/rack_baseline.json`](../configs/rack_baseline.json) (keys carry their units) and in the code defaults in [`src/core/config/Config.cpp`](../src/core/config/Config.cpp).
+This page lists every input of the current model (chip → server → rack → cooling plant). Values tagged **ASSUMED** are study assumptions, not measurements; replace them as better data arrives. All of them live in [`configs/rack_baseline.json`](../configs/rack_baseline.json) (keys carry their units) and in the code defaults in [`src/core/config/Config.cpp`](../src/core/config/Config.cpp).
 
-Schematics: [chip](schematics/chip.svg) · [server](schematics/server.svg) · [rack](schematics/rack.svg)
+Schematics: [chip](schematics/chip.svg) · [server](schematics/server.svg) · [rack](schematics/rack.svg) · [cooling plant](schematics/plant.svg)
 
 Reference numbers like [3] point to the reference list in the research proposal. Extra method references are marked A1, A2, and so on, and are listed at the end of this page.
 
@@ -76,14 +76,46 @@ Branch flows are **solved** from equal branch pressure drop ([6]). Without valve
 | Rack | 42U; 8 × 4U servers in U7–U38; CDU + pump U1–U6; network U39–40; spare U41–42 | proposal: 10U for cooling/network/spare |
 | Manifolds | 20 mm ID, vertical at the rear; Churchill friction (A2) + K = 0.5 per tap | **ASSUMED** size |
 | Layout | direct return (default) or reverse return | |
-| CDU heat exchanger | **placeholder** resistance: 25 kPa at 12 L/min, 50 % laminar | **ASSUMED** until the CDU milestone |
+| CDU heat exchanger, equipment-side Δp | 25 kPa at 12 L/min, 50 % laminar | **ASSUMED** (thermal model in §5b) |
 | Filter | 8 kPa at 12 L/min, 30 % laminar | **ASSUMED** |
 | Expansion vessel | fixes 150 kPa at the pump suction | reference pressure |
 | Pump | H = s²·100 kPa − bQ², H = 0 at 20 L/min (s = 1); η_max 0.5 at 12 L/min; motor 0.9 | **ASSUMED** small in-rack pump |
 | Pump control | fixed speed / fixed flow (12 L/min) / PI on hottest chip (target 85 °C) | |
-| Supply temperature | 35 °C, fixed | temporary boundary; the CDU and dry cooler are the next milestone ([8]) |
+| Supply temperature | `rack` level: fixed 35 °C. `plant` level: computed by the CDU model (§5b) | [8] |
 | Hydrostatics | one loop density; ρgz cancels around the closed loop | [14]; unit test |
 | Electrical pump power | P = Δp·V̇ / (η_pump·η_motor) | [10] |
+
+## 5b. Cooling plant (CDU, facility loop, dry cooler, trim chiller)
+
+Run it with `--level plant` or [`configs/plant_baseline.json`](../configs/plant_baseline.json). The equipment loop and the facility loop are sealed and never mix ([7]). Heat leaves through a dry cooler, so nothing evaporates in operation ([8]).
+
+| Component | Value | Note |
+|---|---|---|
+| CDU plate HX | counterflow ε-NTU; each side hA = 2800 W/K at design (12 / 14 L/min) | **ASSUMED** sizing: UA ≈ 1440 W/K, effectiveness 0.66, ~4 K approach at 6.4 kW |
+| Side conductance scaling | hA ∝ (ṁ/ṁ_ref)^0.6 (μ/μ_ref)^(1/3−0.6) (k/k_ref)^(2/3) (c_p/c_p,ref)^(1/3) | Dittus–Boelter form, so **thicker coolant lowers hA** |
+| Facility loop | water, 14 L/min fixed; Δp = 20 (CDU) + 30 (coil) + 10 (piping) kPa; pump η 0.5 × motor 0.9 | **ASSUMED**; ≈ 31 W |
+| Dry cooler | crossflow ε-NTU (air mixed); UA 2000 W/K at full fans; 75 % of resistance on the air side, hA_air ∝ V̇^0.6; 2.0 m³/s and 450 W at full speed, P ∝ speed³ | **ASSUMED**; full fans hold 35 °C supply up to ≈ 29 °C outdoor |
+| Fan control | PI on equipment supply temperature, Kp 0.08 /K, Ki 0.0015 /(K·s) | tuned on a 30 % → 100 % load step (settles within ~0.03 K in 10 min) |
+| Dry-cooler bypass | when outdoor air ≥ facility water, or when (while chilling) its fans cost more than the chiller power they save | economizer rule |
+| Trim chiller | only with fans at 100 % and supply above setpoint; COP = 0.5 × Carnot (T_evap = target − 5 K, T_cond = outdoor + 10 K), ≤ 10; 10 kW capacity | **ASSUMED** |
+| Thermal mass | 6 L equipment supply side, 8 L return side, 25 L facility loop | **ASSUMED** |
+| Outdoor air | constant or daily sine (mean, amplitude, period) | |
+| Supply setpoint | 35 °C | proposal |
+| Reported | cooling electricity = rack pump + facility pump + dry-cooler fans + chiller; partial PUE = (IT + server fans + cooling)/(IT + server fans); water evaporated (0) and evaporative-tower equivalent (heat / 2.43 MJ/kg) | server fans count as IT, following PUE convention |
+
+**Climate sweep** at full load (`mfsim climate-sweep --config configs/plant_baseline.json`):
+
+| Outdoor °C | Dry-cooler fans | Chiller electric | Cooling electric | Partial PUE | Supply °C |
+|---|---|---|---|---|---|
+| 0 | 10 % (min) | 0 W | 56 W | 1.007 | 29.4 (below setpoint) |
+| 20 | 23 % | 0 W | 60 W | 1.007 | 35.0 |
+| 25 | 41 % | 0 W | 85 W | 1.011 | 35.0 |
+| 28 | 79 % | 0 W | 277 W | 1.034 | 35.0 |
+| 30 | 100 % | 94 W | 599 W | 1.074 | 35.0 |
+| 35 | bypassed | 809 W | 864 W | 1.107 | 35.0 |
+| 40 | bypassed | 1023 W | 1077 W | 1.134 | 35.0 |
+
+With the chiller off, the supply temperature floats up instead: 41 °C at 35 °C outdoor, where the hottest chip reaches 87.8 °C. An evaporative tower rejecting the same 6.4 kW would evaporate about 9.5 L/h; the dry-cooler loop evaporates none. The cost of that water saving is the fan and chiller electricity on hot days ([9]).
 
 ## 6. Hand calculations and what the model gives
 
@@ -108,7 +140,9 @@ Branch flows are **solved** from equal branch pressure drop ([6]). Without valve
 
 The 10 × 10 grid is within about 0.7 K of the refined result. Use 20 × 20 when a comparison depends on differences below about 1 K.
 
-## 7. First viscosity results (rack level)
+## 7. Viscosity results
+
+### 7a. Rack level (fixed 35 °C supply)
 
 The experiment changes **viscosity only** (1×, 2×, 4× water); density, c_p and k stay those of water. All servers run at full load with the hotspot map. Balancing valves are re-commissioned for each coolant. Run it with `mfsim sweep-viscosity --config configs/rack_baseline.json`.
 
@@ -124,11 +158,26 @@ What this shows so far:
 1. **At a given flow, viscosity does not change chip temperature.** The group Re·Pr = ρuD_h·c_p/k contains no μ, so the thermal entrance and h are unchanged. The flow needed to hold 85 °C is the same at every viscosity (unit-tested).
 2. **Viscosity costs pumping energy instead.** Holding 85 °C at 4× viscosity needs 2.55× the pump power, because the laminar parts of the loop (microchannels, cold plates, part of the HX and filter) scale with μ.
 3. **If the pump is not re-adjusted**, the thicker coolant reduces flow and the hottest chip exceeds the limit (89.4 °C at 4×).
-4. **In absolute terms the pump is small** compared with the 8 kW IT load (0.18 % → 0.47 %) and with the fans (≈ 49 W). That ratio depends heavily on the **placeholder CDU and filter curves**, so treat it as preliminary until the CDU and dry-cooler milestone.
+4. **In absolute terms the pump is small** compared with the 8 kW IT load (0.18 % → 0.47 %) and with the server fans (≈ 49 W).
+
+### 7b. Plant level (supply from the CDU, outdoor 25 °C and 30 °C)
+
+`mfsim sweep-viscosity --config configs/plant_baseline.json [--outdoor 30]`, holding the hottest chip at 85 °C:
+
+| μ | CDU UA | Rack pump | Dry-cooler fans | Chiller | **Cooling total** | Partial PUE |
+|---|---|---|---|---|---|---|
+| 1×, 25 °C | 1369 W/K | 14.7 W | 25.4 W | 0 W | **71.2 W** | 1.0088 |
+| 2×, 25 °C | 1235 W/K | 21.8 W | 32.0 W | 0 W | **84.9 W** | 1.0106 |
+| 4×, 25 °C | 1104 W/K | 37.5 W | 43.6 W | 0 W | **112.2 W** | 1.0139 |
+| 1×, 30 °C | 1369 W/K | 14.7 W | 450 W | 64.8 W | **560.6 W** | 1.0697 |
+| 4×, 30 °C | 1104 W/K | 37.5 W | 450 W | 142.5 W | **661.1 W** | 1.0821 |
+
+The plant level adds a second viscosity penalty that the rack-only model could not show. A thicker coolant lowers the CDU's equipment-side conductance (UA −19 % at 4×), so the facility loop must supply colder water to hold the same 35 °C supply. On a mild day that shows up as extra dry-cooler fan power. On a warm day it shows up as extra chiller power, which is larger. At 4× viscosity the extra cooling electricity is +41 W at 25 °C (+23 W pump, +18 W fans) and +100 W at 30 °C (+23 W pump, +78 W chiller).
 
 ## 8. Not in this milestone
 
-- CDU heat-exchanger effectiveness, facility loop, dry cooler and outdoor climate ([7], [8], [9]). The fixed 35 °C supply hides the energy needed to cool the fluid.
+- Glycol in the facility loop (freeze protection), and room HVAC for the 1.6 kW air-cooled load. Water-use statements cover only the liquid loop.
+- Part-load optimisation of fans plus chiller together (the model uses either full fans with trim chilling, or a full bypass). Humidity, and pump and fan curves beyond simple affinity laws.
 - Expansion-vessel dynamics. Glycol coolants need mixture-specific property data; the IAPWS pure-water formulations are not substituted ([11], [12]).
 - Qu & Mudawar benchmark ([3]). The geometry can be configured, but the comparison needs data points taken from the paper.
 - The CNN workload driving u(t) ([13]); the `Workload` interface is ready for it.

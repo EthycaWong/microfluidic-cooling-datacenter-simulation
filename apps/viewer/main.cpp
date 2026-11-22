@@ -80,10 +80,19 @@ int main(int argc, char** argv) {
     GuiSetFont(font);
     GuiSetStyle(DEFAULT, TEXT_SIZE, 15);
 
-    mf::Rack rack(cfg.rack, cfg.server, std::make_shared<mf::WaterIAPWS>());
+    const bool plantOn = arg(argc, argv, "--plant", "on") != "off";
+    mf::DataCenter dc(cfg.rack, cfg.server, cfg.plant, std::make_shared<mf::WaterIAPWS>(), plantOn);
+    mf::Rack& rack = dc.rack();
     rack.setViscosityScale(cfg.viscosityScale);
     App app;
+    app.dc = &dc;
     app.rack = &rack;
+    app.s.plant = plantOn;
+    app.s.outdoor = static_cast<float>(cfg.plant.weather.meanC);
+    app.s.setpoint = static_cast<float>(cfg.plant.supplySetpointC);
+    app.s.chiller = cfg.plant.chiller.enabled;
+    const std::string outdoorArg = arg(argc, argv, "--outdoor", "");
+    if (!outdoorArg.empty()) { app.s.outdoor = std::stof(outdoorArg); dc.plant().setOutdoorMean(app.s.outdoor); }
     app.s.font = font;
     for (int k = 0; k < rack.serverCount(); ++k) app.manual.push_back(std::make_shared<mf::ConstantWorkload>(1.0));
     app.s.viscosity = static_cast<float>(cfg.viscosityScale);
@@ -106,7 +115,7 @@ int main(int argc, char** argv) {
     for (int k = 0; k < 8; ++k) app.manual[k]->set(app.s.load[k]);
     applyProfile(app);
     frameScene(app.s);
-    rack.solveSteady(); // start from a converged state
+    dc.solveSteady(); // start from a converged state
     app.s.pumpSpeed = static_cast<float>(rack.pumpSpeed());
 
     const float panelW = 360.0f;
@@ -115,7 +124,7 @@ int main(int argc, char** argv) {
     while (!WindowShouldClose()) {
         const float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
         const Vector2 mouse = GetMousePosition();
-        const Rectangle readoutArea{sw - 380, 12, 368, 610};
+        const Rectangle readoutArea{sw - 380, 12, 368, 750};
         const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea);
 
         // ---- camera input ----
@@ -133,7 +142,7 @@ int main(int argc, char** argv) {
                 app.s.target.y += d.y * k;
             }
             const float wheel = GetMouseWheelMove();
-            if (wheel != 0) app.s.distance = std::clamp(app.s.distance * (1.0f - 0.1f * wheel), 0.25f, 12.0f);
+            if (wheel != 0) app.s.distance = std::clamp(app.s.distance * (1.0f - 0.1f * wheel), 0.25f, 14.0f);
             if (app.s.scene == SceneId::Rack && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 const Ray ray = GetScreenToWorldRay(mouse, cameraFor(app.s));
                 for (int k = 0; k < rack.serverCount(); ++k)
@@ -153,13 +162,13 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_TWO)) { app.s.scene = SceneId::Server; frameScene(app.s); }
         if (IsKeyPressed(KEY_THREE)) { app.s.scene = SceneId::Chip; frameScene(app.s); }
         if (app.requestFrame) { frameScene(app.s); app.requestFrame = false; }
-        if (app.requestSteady) { rack.solveSteady(); app.requestSteady = false; }
+        if (app.requestSteady) { dc.solveSteady(); app.requestSteady = false; }
 
         // ---- physics: fixed implicit sub-steps decoupled from the frame rate ----
         if (!app.s.paused && GetFrameTime() > 0.0f) {
             const double simDt = std::min<double>(GetFrameTime(), 0.05) * app.s.simSpeed;
-            const int n = std::clamp(static_cast<int>(std::ceil(simDt / 0.02)), 1, 50);
-            for (int i = 0; i < n; ++i) rack.step(simDt / n);
+            const int n = std::clamp(static_cast<int>(std::ceil(simDt / 0.02)), 1, 40);
+            for (int i = 0; i < n; ++i) dc.step(simDt / n);
             app.s.anim += static_cast<float>(simDt);
         }
         if (app.s.pumpMode == 2) app.s.pumpSpeed = static_cast<float>(rack.pumpSpeed());
@@ -176,13 +185,16 @@ int main(int argc, char** argv) {
         app.s.labelList.clear();
         BeginMode3D(cam);
         switch (app.s.scene) {
-        case SceneId::Rack: drawRack3D(rack, app.s); break;
+        case SceneId::Rack:
+            drawRack3D(rack, app.s);
+            if (dc.plantEnabled()) drawPlant3D(dc, app.s);
+            break;
         case SceneId::Server: drawServer3D(rack, app.s); break;
         case SceneId::Chip: drawChip3D(rack, app.s); break;
         }
         EndMode3D();
         drawLabels(app.s, cam);
-        const char* titles[] = {"42U rack: 8 x 4U servers, rear supply/return manifolds, CDU + pump",
+        const char* titles[] = {"42U rack + CDU, closed loop to an outdoor dry cooler (no evaporation)",
                                 "Server: supply \xE2\x86\x92 GPU 1 | GPU 2 | CPU in parallel \xE2\x86\x92 return  (dies enlarged)",
                                 "Chip: exploded view, silicon heat map and microchannel coolant"};
         drawText(app.s, titles[static_cast<int>(app.s.scene)], panelW + 20, 16, 20, Color{230, 236, 245, 255});

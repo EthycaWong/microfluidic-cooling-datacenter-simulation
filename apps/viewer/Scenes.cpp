@@ -90,7 +90,7 @@ BoundingBox serverBox(const Rack& r, int k) {
 
 void frameScene(ViewerState& s) {
     switch (s.scene) {
-    case SceneId::Rack: s.target = {0.1f, 0.78f, 0}; s.distance = 4.3f; s.yaw = 1.15f; s.pitch = 0.22f; break;
+    case SceneId::Rack: s.target = {0.95f, 0.85f, -0.9f}; s.distance = 6.5f; s.yaw = 0.42f; s.pitch = 0.30f; break;
     case SceneId::Server: s.target = {0.04f, 0.02f, 0.02f}; s.distance = 1.45f; s.yaw = 0.55f; s.pitch = 0.80f; break;
     case SceneId::Chip: s.target = {0.05f, 0.18f, 0}; s.distance = 3.6f; s.yaw = 0.55f; s.pitch = 0.42f; break;
     }
@@ -130,13 +130,13 @@ void drawRack3D(const Rack& r, ViewerState& s) {
         const float a = ang + b * 2.0f * PI / 5;
         DrawLine3D(Vector3Add(pc, {0, 0, 0.022f}), Vector3Add(pc, {0.06f * cosf(a), 0.06f * sinf(a), 0.022f}), kInk);
     }
-    label(s, Vector3Add(pc, {0.05f, -0.05f, 0.05f}), fmt2("Pump %.0f%% speed, %.1f W", 100 * r.pumpSpeed(), r.pumpPower()));
+    label(s, Vector3Add(pc, {0.12f, 0.02f, 0.05f}), fmt2("Pump %.0f%% speed, %.1f W", 100 * r.pumpSpeed(), r.pumpPower()));
     // Heat exchanger plates + filter + expansion vessel (front left).
     for (int i = 0; i < 9; ++i)
         DrawCube({-0.16f + i * 0.012f, kPlinth + 0.12f, kSrvD / 2 + 0.01f}, 0.006f, 0.16f, 0.02f,
                  lerpColor(heatColor(r.returnT(), kCoolantLo, kCoolantHi), heatColor(r.supplyT(), kCoolantLo, kCoolantHi), i / 8.0f));
     DrawCylinder({-0.02f, kPlinth + 0.05f, kSrvD / 2 + 0.03f}, 0.022f, 0.022f, 0.12f, 12, Color{120, 130, 140, 255});
-    label(s, {-0.30f, kPlinth + 0.04f, kSrvD / 2 + 0.05f}, "CDU (placeholder HX + filter)");
+    label(s, {-0.30f, kPlinth + 0.04f, kSrvD / 2 + 0.05f}, "CDU (heat exchanger + filter)");
 
     // ---- servers ----
     const Hotspot hs = r.hotspot();
@@ -229,6 +229,72 @@ void drawRack3D(const Rack& r, ViewerState& s) {
     label(s, {xS + 0.03f, yPrev + 0.08f, zM}, fmt("Supply manifold %.1f \xC2\xB0""C", r.supplyT()), supC, true);
     label(s, {xR - 0.03f, yPrev + 0.16f, zM}, fmt("Return manifold %.2f \xC2\xB0""C", r.returnT()),
           heatColor(r.returnT(), kCoolantLo, kCoolantHi), true);
+}
+
+// ================================================================================================
+// PLANT (outdoor dry cooler, trim chiller, facility loop)
+// ================================================================================================
+void drawPlant3D(const mf::DataCenter& dc, ViewerState& s) {
+    const mf::PlantState& p = dc.plant().state();
+    // Rear building wall (translucent) behind the rack; outdoor pad beyond it.
+    const float wallZ = -0.85f;
+    DrawCube({1.5f, 0.01f, -1.75f}, 2.6f, 0.02f, 1.5f, Color{38, 46, 38, 255});
+    label(s, {-0.6f, 2.25f, wallZ}, "building wall  |  outdoors behind", kDim);
+
+    // Dry cooler: frame, coil coloured by facility water, fans on top spinning with speed.
+    const Vector3 dcC{1.45f, 0.45f, -1.75f};
+    const Color coilIn = heatColor(p.facilityReturnT, kCoolantLo, kCoolantHi);
+    const Color coilOut = heatColor(p.dryCoolerOutT, kCoolantLo, kCoolantHi);
+    DrawCube(dcC, 1.3f, 0.7f, 0.9f, Color{58, 64, 72, 255});
+    DrawCubeWires(dcC, 1.3f, 0.7f, 0.9f, Color{110, 118, 130, 255});
+    for (int i = 0; i < 14; ++i) { // coil fins, warm (inlet) to cool (outlet)
+        const float x = dcC.x - 0.6f + i * 0.092f;
+        const Color c = lerpColor(coilIn, coilOut, i / 13.0f);
+        DrawCube({x, dcC.y, dcC.z + 0.46f}, 0.05f, 0.6f, 0.01f, c);
+        DrawCube({x, dcC.y, dcC.z - 0.46f}, 0.05f, 0.6f, 0.01f, c);
+    }
+    for (int f = 0; f < 2; ++f) {
+        const Vector3 c{dcC.x - 0.32f + f * 0.64f, dcC.y + 0.36f, dcC.z};
+        DrawCylinder(c, 0.27f, 0.27f, 0.03f, 28, Color{30, 34, 40, 255});
+        const float a0 = s.anim * static_cast<float>(p.fanSpeed) * 14.0f + f;
+        for (int b = 0; b < 6; ++b) {
+            const float a = a0 + b * 2 * PI / 6;
+            DrawLine3D({c.x, c.y + 0.035f, c.z}, {c.x + 0.25f * cosf(a), c.y + 0.035f, c.z + 0.25f * sinf(a)}, kInk);
+        }
+        for (int k = 0; k < 4; ++k) { // warm air leaving upwards
+            const float h = std::fmod(s.anim * (0.2f + 0.5f * static_cast<float>(p.fanSpeed)) + k * 0.25f, 1.0f);
+            DrawSphere({c.x + 0.1f * cosf(k * 1.7f), c.y + 0.08f + 0.6f * h, c.z + 0.1f * sinf(k * 1.7f)}, 0.012f,
+                       ColorAlpha(Color{255, 190, 120, 255}, 1.0f - h));
+        }
+    }
+    label(s, {dcC.x - 0.4f, dcC.y + 1.05f, dcC.z}, fmt("Outdoor dry cooler   air %.1f \xC2\xB0""C", p.outdoorT), kInk, true);
+    label(s, {dcC.x - 0.4f, dcC.y + 0.92f, dcC.z}, fmt2("fans %.0f%%  %.0f W", 100 * p.fanSpeed, p.fanPower) +
+              fmt("   rejects %.0f W, evaporates no water", p.dryCoolerHeat), kDim);
+
+    // Trim chiller beside it.
+    const Vector3 chC{2.35f, 0.2f, -1.45f};
+    const bool on = p.chillerHeat > 1.0;
+    DrawCube(chC, 0.5f, 0.36f, 0.6f, on ? Color{40, 70, 120, 255} : Color{50, 54, 62, 255});
+    DrawCubeWires(chC, 0.5f, 0.36f, 0.6f, on ? Color{120, 180, 255, 255} : Color{90, 96, 108, 255});
+    label(s, {chC.x - 0.2f, chC.y + 0.3f, chC.z}, on ? fmt2("Trim chiller ON  %.0f W  COP %.1f", p.chillerPower, p.chillerCop)
+                                                    : std::string(dc.plant().params().chiller.enabled ? "Trim chiller (standby)" : "Trim chiller (off)"),
+          on ? Color{140, 200, 255, 255} : kDim);
+
+    // Facility pipes: CDU (rack bottom, rear) -> through the wall -> dry cooler, and back.
+    const float yS = 0.14f, yR = 0.24f, x0 = 0.18f, zOut = -0.42f;
+    const Color fsC = heatColor(p.facilitySupplyT, kCoolantLo, kCoolantHi), frC = heatColor(p.facilityReturnT, kCoolantLo, kCoolantHi);
+    const std::vector<Vector3> ret = {{x0, yR, zOut}, {0.55f, yR, zOut}, {0.55f, yR, dcC.z - 0.15f}, {dcC.x - 0.66f, yR, dcC.z - 0.15f}};
+    const std::vector<Vector3> sup = {{dcC.x - 0.66f, yS, dcC.z + 0.15f}, {0.42f, yS, dcC.z + 0.15f}, {0.42f, yS, zOut}, {x0, yS, zOut}};
+    hose(ret, 0.022f, frC);
+    hose(sup, 0.022f, fsC);
+    for (size_t i = 0; i + 1 < ret.size(); ++i) flowDots(ret[i], ret[i + 1], 1.0, s.anim, Color{255, 235, 220, 255}, 2, 0.01f);
+    for (size_t i = 0; i + 1 < sup.size(); ++i) flowDots(sup[i], sup[i + 1], 1.0, s.anim, Color{230, 245, 255, 255}, 2, 0.01f);
+    label(s, {0.6f, yR + 0.1f, -1.2f}, fmt("facility return %.1f \xC2\xB0""C", p.facilityReturnT), frC);
+    label(s, {0.45f, yS - 0.06f, -1.3f}, fmt("facility supply %.1f \xC2\xB0""C", p.facilitySupplyT), fsC);
+    label(s, {-0.30f, kPlinth - 0.03f, kSrvD / 2 + 0.05f}, fmt2("UA %.0f W/K, effectiveness %.2f", p.cduUA, p.cduEffectiveness), kDim);
+    // Translucent wall last, so the equipment behind it still shows through.
+    DrawCube({0.9f, 1.1f, wallZ}, 3.2f, 2.2f, 0.04f, ColorAlpha(Color{120, 130, 150, 255}, 0.12f));
+    DrawCubeWires({0.9f, 1.1f, wallZ}, 3.2f, 2.2f, 0.04f, ColorAlpha(Color{150, 160, 180, 255}, 0.45f));
 }
 
 // ================================================================================================

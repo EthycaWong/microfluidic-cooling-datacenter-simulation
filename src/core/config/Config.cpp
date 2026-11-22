@@ -195,6 +195,60 @@ void applyConfigJson(SimConfig& c, const std::string& text) {
             get(q, "max_speed", p.pump.maxSpeed);
         }
     }
+    if (j.contains("plant")) {
+        const json& q = j["plant"];
+        PlantParams& p = c.plant;
+        get(q, "supply_setpoint_C", p.supplySetpointC);
+        get(q, "equip_supply_volume_L", p.equipSupplyVolumeL);
+        get(q, "equip_return_volume_L", p.equipReturnVolumeL);
+        get(q, "facility_volume_L", p.facilityVolumeL);
+        get(q, "fan_kp", p.fanKp);
+        get(q, "fan_ki", p.fanKi);
+        if (q.contains("cdu")) {
+            const json& d = q["cdu"];
+            get(d, "hA_equip_W_per_K", p.cdu.hAEquipRef);
+            get(d, "hA_facility_W_per_K", p.cdu.hAFacilityRef);
+            get(d, "equip_ref_lpm", p.cdu.equipRefLpm);
+            get(d, "facility_ref_lpm", p.cdu.facilityRefLpm);
+            get(d, "exponent", p.cdu.exponent);
+            get(d, "wall_R_K_per_W", p.cdu.wallR);
+            get(d, "facility_dp_ref_kPa", p.cdu.facilityDpRefPa, 1e3);
+        }
+        if (q.contains("dry_cooler")) {
+            const json& d = q["dry_cooler"];
+            get(d, "UA_W_per_K", p.dryCooler.uaRef);
+            get(d, "air_share", p.dryCooler.airShare);
+            get(d, "air_exponent", p.dryCooler.airExponent);
+            get(d, "water_exponent", p.dryCooler.waterExponent);
+            get(d, "max_airflow_m3s", p.dryCooler.maxAirflow);
+            get(d, "max_fan_W", p.dryCooler.maxFanPower);
+            get(d, "min_fan_speed", p.dryCooler.minFanSpeed);
+            get(d, "coil_dp_ref_kPa", p.dryCooler.coilDpRefPa, 1e3);
+        }
+        if (q.contains("chiller")) {
+            const json& d = q["chiller"];
+            get(d, "enabled", p.chiller.enabled);
+            get(d, "capacity_W", p.chiller.capacityW);
+            get(d, "carnot_fraction", p.chiller.carnotFraction);
+            get(d, "evap_approach_K", p.chiller.evapApproachK);
+            get(d, "cond_approach_K", p.chiller.condApproachK);
+            get(d, "max_cop", p.chiller.maxCop);
+        }
+        if (q.contains("facility")) {
+            const json& d = q["facility"];
+            get(d, "flow_lpm", p.facility.flowLpm);
+            get(d, "piping_dp_ref_kPa", p.facility.pipingDpRefPa, 1e3);
+            get(d, "pump_eta", p.facility.pumpEta);
+            get(d, "motor_eta", p.facility.motorEta);
+        }
+        if (q.contains("weather")) {
+            const json& d = q["weather"];
+            get(d, "outdoor_mean_C", p.weather.meanC);
+            get(d, "daily_amplitude_K", p.weather.amplitudeK);
+            get(d, "period_s", p.weather.periodS);
+            get(d, "phase_s", p.weather.phaseS);
+        }
+    }
     if (j.contains("chip_rig")) {
         get(j["chip_rig"], "flow_lpm", c.chipFlowLpm);
         get(j["chip_rig"], "inlet_C", c.chipInletC);

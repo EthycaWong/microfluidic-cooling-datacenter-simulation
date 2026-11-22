@@ -36,6 +36,8 @@ add_library(mfcore STATIC
   src/core/thermal/AirGroup.cpp
   src/core/system/Server.cpp
   src/core/system/Rack.cpp
+  src/core/system/CoolingPlant.cpp
+  src/core/system/DataCenter.cpp
   src/core/workload/Workload.cpp
   src/core/config/Config.cpp
 )
@@ -96,6 +98,7 @@ if(MF_BUILD_TESTS)
     tests/test_hydraulics.cpp
     tests/test_chip.cpp
     tests/test_system.cpp
+    tests/test_plant.cpp
   )
   target_include_directories(mfcore_tests PRIVATE ${doctest_SOURCE_DIR})
   target_link_libraries(mfcore_tests PRIVATE mfcore)

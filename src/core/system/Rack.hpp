@@ -52,6 +52,7 @@ public:
     /// Change coolant viscosity; by default the server balancing valves are re-sized for it.
     void setViscosityScale(double s, bool rebalance = true);
     double viscosityScale() const { return fluid_->scale(); }
+    std::shared_ptr<const Fluid> fluid() const { return fluid_; }
     void setPumpMode(PumpMode m);
     void setPumpSpeed(double s);
     void setTargetFlowLpm(double lpm) { rp_.targetFlowLpm = lpm; }
