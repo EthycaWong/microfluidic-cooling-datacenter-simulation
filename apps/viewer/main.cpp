@@ -3,8 +3,10 @@
 //   mfsim_viewer [--config configs/rack_baseline.json] [--scene rack|server|chip] [--server 1-8] [--chip 0-2]
 //                [--plant on|off] [--outdoor C] [--loads 1,1,...] [--coolant PG25]
 //                [--job live|replay] [--job-servers 2|4|8] [--live-trace F] [--replay-trace F]
+//                [--speed X] [--chart-window 0|1|2] [--scene rack|server|chip|charts]
 //                [--screenshot out.png --frames 90]   (render, save a screenshot, exit)
 #include "Scenes.hpp"
+#include "Charts.hpp"
 #include "UiPanel.hpp"
 #include "Units.hpp"
 #include "config/Config.hpp"
@@ -106,9 +108,14 @@ int main(int argc, char** argv) {
     app.s.targetPeak = static_cast<float>(cfg.rack.targetPeakC);
     app.s.layout = cfg.rack.layout == mf::ManifoldLayout::ReverseReturn ? 1 : 0;
     app.s.pumpMode = static_cast<int>(cfg.rack.pumpMode);
+    app.s.simSpeed = std::stof(arg(argc, argv, "--speed", "1"));
+    app.s.chartWindow = std::clamp(std::stoi(arg(argc, argv, "--chart-window", "1")), 0, 2);
     app.s.server = std::clamp(std::stoi(arg(argc, argv, "--server", "8")) - 1, 0, rack.serverCount() - 1);
     app.s.branch = std::clamp(std::stoi(arg(argc, argv, "--chip", "0")), 0, 2);
-    app.s.scene = sceneArg == "chip" ? SceneId::Chip : sceneArg == "server" ? SceneId::Server : SceneId::Rack;
+    app.s.scene = sceneArg == "chip"     ? SceneId::Chip
+                : sceneArg == "server"   ? SceneId::Server
+                : sceneArg == "charts"   ? SceneId::Charts
+                                         : SceneId::Rack;
     const std::string loadArg = arg(argc, argv, "--loads", "");
     if (!loadArg.empty()) { // e.g. --loads 1,1,1,1,0.2,0.2,0.2,0.2
         int k = 0;
@@ -137,7 +144,7 @@ int main(int argc, char** argv) {
         const float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
         const Vector2 mouse = GetMousePosition();
         const Rectangle readoutArea{sw - 380, 12, 368, 790};
-        const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea);
+        const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea) || app.s.scene == SceneId::Charts;
 
         // ---- camera input ----
         if (!overUi) {
@@ -173,6 +180,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_ONE)) { app.s.scene = SceneId::Rack; frameScene(app.s); }
         if (IsKeyPressed(KEY_TWO)) { app.s.scene = SceneId::Server; frameScene(app.s); }
         if (IsKeyPressed(KEY_THREE)) { app.s.scene = SceneId::Chip; frameScene(app.s); }
+        if (IsKeyPressed(KEY_FOUR)) app.s.scene = SceneId::Charts;
         if (app.requestFrame) { frameScene(app.s); app.requestFrame = false; }
         if (app.requestSteady) { dc.solveSteady(); app.requestSteady = false; }
 
@@ -184,10 +192,9 @@ int main(int argc, char** argv) {
             app.s.anim += static_cast<float>(simDt);
         }
         if (app.s.pumpMode == 2) app.s.pumpSpeed = static_cast<float>(rack.pumpSpeed());
-        if (rack.time() - lastSample >= 0.1) {
-            app.s.history.push_back({rack.time(), rack.hotspot().t, rack.pumpPower(), rack.totalFlowLpm(), rack.returnT(),
-                                     rack.server(0).activity()});
-            while (!app.s.history.empty() && app.s.history.front().t < rack.time() - 62.0) app.s.history.pop_front();
+        // Sample often enough for smooth 1-minute charts, sparser at high simulation speed.
+        if (rack.time() - lastSample >= std::max(0.1, 0.02 * app.s.simSpeed)) {
+            recordSample(app.s, dc);
             lastSample = rack.time();
         }
 
@@ -196,24 +203,30 @@ int main(int argc, char** argv) {
         ClearBackground(Color{18, 20, 26, 255});
         const Camera3D cam = cameraFor(app.s);
         app.s.labelList.clear();
-        BeginMode3D(cam);
-        switch (app.s.scene) {
-        case SceneId::Rack:
-            drawRack3D(rack, app.s);
-            if (dc.plantEnabled()) drawPlant3D(dc, app.s);
-            break;
-        case SceneId::Server: drawServer3D(rack, app.s); break;
-        case SceneId::Chip: drawChip3D(rack, app.s); break;
+        const bool charts = app.s.scene == SceneId::Charts;
+        if (!charts) {
+            BeginMode3D(cam);
+            switch (app.s.scene) {
+            case SceneId::Rack:
+                drawRack3D(rack, app.s);
+                if (dc.plantEnabled()) drawPlant3D(dc, app.s);
+                break;
+            case SceneId::Server: drawServer3D(rack, app.s); break;
+            case SceneId::Chip: drawChip3D(rack, app.s); break;
+            default: break;
+            }
+            EndMode3D();
+            drawLabels(app.s, cam);
+            const char* titles[] = {"42U rack + CDU, closed loop to an outdoor dry cooler (no evaporation)",
+                                    "Server: supply \xE2\x86\x92 GPU 1 | GPU 2 | CPU in parallel \xE2\x86\x92 return  (dies enlarged)",
+                                    "Chip: exploded view, silicon heat map and microchannel coolant"};
+            drawText(app.s, titles[static_cast<int>(app.s.scene)], panelW + 20, 16, 20, Color{230, 236, 245, 255});
+        } else {
+            drawDashboard(app.s, dc, {panelW + 16, 14, sw - panelW - 16 - 396, sh - 26});
         }
-        EndMode3D();
-        drawLabels(app.s, cam);
-        const char* titles[] = {"42U rack + CDU, closed loop to an outdoor dry cooler (no evaporation)",
-                                "Server: supply \xE2\x86\x92 GPU 1 | GPU 2 | CPU in parallel \xE2\x86\x92 return  (dies enlarged)",
-                                "Chip: exploded view, silicon heat map and microchannel coolant"};
-        drawText(app.s, titles[static_cast<int>(app.s.scene)], panelW + 20, 16, 20, Color{230, 236, 245, 255});
         drawControlPanel(app, {0, 0, panelW, sh});
         drawReadouts(app, readoutArea);
-        drawHistory(app.s, {panelW + 20, sh - 160, sw - panelW - 420, 146});
+        if (!charts) drawHistory(app.s, {panelW + 20, sh - 160, sw - panelW - 420, 146});
         drawLegend(app.s, {sw - 360, sh - 130, 330, 110});
         EndDrawing();
 

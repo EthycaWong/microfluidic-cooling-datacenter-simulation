@@ -91,7 +91,7 @@ void drawControlPanel(App& app, Rectangle a) {
 
     // ---- view ----
     int scene = static_cast<int>(s.scene);
-    GuiToggleGroup({x, y, (w - 8) / 3, 28}, "Rack;Server;Chip", &scene);
+    GuiToggleGroup({x, y, (w - 12) / 4, 28}, "Rack;Server;Chip;Charts", &scene);
     if (scene != static_cast<int>(s.scene)) { s.scene = static_cast<SceneId>(scene); frameScene(s); }
     y += 36;
     drawText(s, "Server", x, y + 4, 15, kDim);

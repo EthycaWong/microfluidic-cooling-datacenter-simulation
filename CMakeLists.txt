@@ -74,6 +74,7 @@ if(MF_BUILD_VIEWER)
     apps/viewer/main.cpp
     apps/viewer/Scenes.cpp
     apps/viewer/UiPanel.cpp
+    apps/viewer/Charts.cpp
     apps/viewer/raygui_impl.c
   )
   target_include_directories(mfsim_viewer PRIVATE apps/viewer ${raygui_SOURCE_DIR}/src ${raygui_SOURCE_DIR})

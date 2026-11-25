@@ -8,7 +8,7 @@
 
 namespace viewer {
 
-enum class SceneId { Rack = 0, Server = 1, Chip = 2 };
+enum class SceneId { Rack = 0, Server = 1, Chip = 2, Charts = 3 };
 
 /// A text label anchored at a 3D point, drawn after the 3D pass.
 struct Label {
@@ -18,7 +18,13 @@ struct Label {
     bool strong = false;
 };
 
-struct HistorySample { double t, peak, pumpW, flowLpm, returnT, u; };
+/// One snapshot of the simulation for the history charts (NaN = not applicable, e.g. plant off).
+struct HistorySample {
+    double t, peak, pumpW, flowLpm, returnT, u;
+    double supplyT, facSupplyT, facReturnT, outdoorT;
+    double itKW, liquidKW, serverFanW, facPumpW, dcFanW, chillerW, coolingW;
+    double headKPa, pumpPct, pue, meanU;
+};
 
 /// Everything the UI can change, plus scene/camera state.
 struct ViewerState {
@@ -46,6 +52,7 @@ struct ViewerState {
     int layout = 0;            ///< 0 direct, 1 reverse return
     bool balance = true;
     bool labels = true;
+    int chartWindow = 1;       ///< dashboard time window: 0 = 1 min, 1 = 10 min, 2 = 60 min
     // camera orbit
     float yaw = 0.75f, pitch = 0.32f, distance = 3.6f;
     Vector3 target{0, 0.95f, 0};

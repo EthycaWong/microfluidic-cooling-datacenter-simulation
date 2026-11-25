@@ -141,6 +141,20 @@ int cmdInfo(const Args& a) {
 }
 
 // ---------------------------------------------------------------------------------------------------
+void writeServerCsv(const Rack& r, const std::string& path) {
+    auto f = openCsv(path);
+    const double rho = r.network().fluid().props(r.supplyT()).rho;
+    f << "server,u_bottom,activity,flow_lpm,gpu1_lpm,gpu2_lpm,cpu_lpm,server_dp_kPa,return_C,peak_C,gpu1_peak_C,gpu2_peak_C,cpu_peak_C\n";
+    for (int k = 0; k < r.serverCount(); ++k) {
+        const Server& s = r.server(k);
+        f << k + 1 << ',' << r.params().firstServerU + k * r.params().serverU << ',' << s.activity() << ','
+          << m3sToLpm(s.totalFlow() / rho) << ',' << m3sToLpm(s.branchFlow(0) / rho) << ',' << m3sToLpm(s.branchFlow(1) / rho)
+          << ',' << m3sToLpm(s.branchFlow(2) / rho) << ',' << s.serverDp(r.network()) / 1e3 << ',' << s.returnT() << ','
+          << s.peakT() << ',' << s.chip(0).peakT() << ',' << s.chip(1).peakT() << ',' << s.chip(2).peakT() << '\n';
+    }
+    std::printf("wrote %s\n", path.c_str());
+}
+
 void printRackSummary(const Rack& r) {
     const Hotspot h = r.hotspot();
     const LiquidLedger l = r.ledger();
@@ -213,6 +227,17 @@ int cmdSteady(const Args& a) {
             for (int i = 0; i < chip.nx(); ++i) std::printf("%6.1f", chip.siliconT(i, j));
             std::printf("\n");
         }
+        if (a.has("out")) {
+            auto f = openCsv(a.get("out"));
+            const auto& p = chip.params();
+            f << "i,j,x_mm,y_mm,silicon_C,coolant_C,power_W,h_row_W_m2K\n";
+            for (int j = 0; j < chip.ny(); ++j)
+                for (int i = 0; i < chip.nx(); ++i)
+                    f << i << ',' << j << ',' << (i + 0.5) * p.die.lx / chip.nx() * 1e3 << ','
+                      << (j + 0.5) * p.die.ly / chip.ny() * 1e3 << ',' << chip.siliconT(i, j) << ',' << chip.fluidT(i, j)
+                      << ',' << chip.cellPower(i, j) << ',' << chip.heatTransferCoeff(i) << '\n';
+            std::printf("wrote %s\n", a.get("out").c_str());
+        }
         return 0;
     }
     if (c.level == "server") {
@@ -230,6 +255,15 @@ int cmdSteady(const Args& a) {
         std::printf("  Air group %.0f W -> room air, component %.1f C, fans %.2f W\n", s.air().power(),
                     s.air().temperature(), s.air().fanPower());
         std::printf("  Liquid energy residual %.2e W\n", s.ledger().residual());
+        if (a.has("out")) {
+            auto f = openCsv(a.get("out"));
+            f << "branch,flow_lpm,branch_dp_kPa,valve_dp_kPa,power_W,outlet_C,peak_C\n";
+            for (int b = 0; b < Server::kBranches; ++b)
+                f << chipName(b) << ',' << m3sToLpm(s.branchFlow(b) / rho) << ',' << s.branchDp(rig.network(), b) / 1e3 << ','
+                  << s.valveDpRef(b) / 1e3 << ',' << s.chip(b).power() << ',' << s.chip(b).outletT() << ',' << s.chip(b).peakT()
+                  << '\n';
+            std::printf("wrote %s\n", a.get("out").c_str());
+        }
         return 0;
     }
     if (c.level == "plant") {
@@ -237,6 +271,7 @@ int cmdSteady(const Args& a) {
         dc->solveSteady();
         printRackSummary(dc->rack());
         printPlantSummary(*dc);
+        if (a.has("out")) writeServerCsv(dc->rack(), a.get("out"));
         return 0;
     }
     Rack rack(c.rack, c.server, makeCoolant(g_coolant));
@@ -244,6 +279,71 @@ int cmdSteady(const Args& a) {
     applyWorkloads(rack, c);
     rack.solveSteady();
     printRackSummary(rack);
+    if (a.has("out")) writeServerCsv(rack, a.get("out"));
+    return 0;
+}
+
+// ---------------------------------------------------------------------------------------------------
+/// Where the pump's pressure goes (loop budget through the top server) and pump vs system curves.
+int cmdHydraulics(const Args& a) {
+    SimConfig c = configFrom(a);
+    const std::string out = a.get("out", "results/hydraulics");
+    std::filesystem::create_directories(out);
+    Rack r(c.rack, c.server, makeCoolant(g_coolant));
+    r.setViscosityScale(c.viscosityScale);
+    applyWorkloads(r, c);
+    r.solveSteady();
+    const HydraulicNetwork& net = r.network();
+    // Pressure budget along the path pump -> supply manifold -> top server (GPU 1) -> return -> CDU.
+    std::map<std::string, double> budget;
+    auto cat = [](const std::string& n) -> std::string {
+        if (n.find("QD") != std::string::npos) return "quick disconnects";
+        if (n.find("GPU1") != std::string::npos) return "GPU branch (microchannels, hose, valve)";
+        if (n.find("supply") != std::string::npos) return "supply manifold + riser";
+        if (n.find("return") != std::string::npos) return "return manifold + drop";
+        if (n.find("filter") != std::string::npos) return "filter";
+        if (n.find("heat exchanger") != std::string::npos) return "CDU heat exchanger";
+        return "";
+    };
+    // Walk the path: follow edges whose names belong to the top server or the shared trunk.
+    const int top = r.serverCount();
+    const std::string tag = "S" + std::to_string(top) + ".";
+    for (int e = 0; e < net.edgeCount(); ++e) {
+        const std::string n = net.edge(e).name();
+        if (n == "pump") continue;
+        const bool serverEdge = n.rfind("S", 0) == 0 && n.find('.') != std::string::npos;
+        if (serverEdge && n.rfind(tag, 0) != 0) continue;              // other servers
+        if (serverEdge && (n.find("GPU2") != std::string::npos || n.find("CPU") != std::string::npos)) continue;
+        const std::string k = cat(n);
+        if (!k.empty()) budget[k] += net.edgeDp(e) / 1e3;
+    }
+    {
+        auto f = openCsv(out + "/pressure_budget.csv");
+        f << "component,dp_kPa\n";
+        double sum = 0;
+        std::printf("Loop pressure budget through server %d GPU 1 at %.2f L/min (pump head %.2f kPa):\n", top,
+                    r.totalFlowLpm(), r.pumpHead() / 1e3);
+        for (auto& [k, v] : budget) { f << '"' << k << "\"," << v << '\n'; sum += v; std::printf("  %-42s %7.2f kPa\n", k.c_str(), v); }
+        std::printf("  %-42s %7.2f kPa  (pump head %.2f)\n", "sum", sum, r.pumpHead() / 1e3);
+    }
+    // Operating points across pump speeds, plus the pump curve at full speed.
+    auto f = openCsv(out + "/operating_points.csv");
+    f << "speed,flow_lpm,head_kPa,pump_W,eta,peak_C\n";
+    for (double sp : {0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4}) {
+        r.setPumpMode(PumpMode::FixedSpeed);
+        r.setPumpSpeed(sp);
+        r.solveSteady();
+        f << sp << ',' << r.totalFlowLpm() << ',' << r.pumpHead() / 1e3 << ',' << r.pumpPower() << ',' << r.pumpEfficiency()
+          << ',' << r.hotspot().t << '\n';
+    }
+    auto g = openCsv(out + "/pump_curve.csv");
+    g << "flow_lpm,head_kPa_speed1\n";
+    const PumpCurve& pc = c.rack.pump;
+    for (int i = 0; i <= 20; ++i) {
+        const double q = pc.maxFlowM3s * i / 20.0;
+        g << m3sToLpm(q) << ',' << (pc.shutoffHeadPa - pc.shutoffHeadPa / (pc.maxFlowM3s * pc.maxFlowM3s) * q * q) / 1e3 << '\n';
+    }
+    std::printf("wrote %s/pressure_budget.csv, operating_points.csv, pump_curve.csv\n", out.c_str());
     return 0;
 }
 
@@ -622,6 +722,8 @@ int cmdCoolantCompare(const Args& a) {
                 plant ? "plant" : "rack");
     if (plant) std::printf("Outdoor %.1f C, facility loop %s.\n", c.plant.weather.meanC, c.facilityCoolant.c_str());
     std::printf("\n coolant  freeze C  mu@40C mPa s  cp@40C  k@40C   chip flow for %.0f C   (single GPU, hotspot map)\n", limit);
+    auto fp = openCsv(a.get("props-out", "results/coolant_props.csv"));
+    fp << "coolant,freeze_C,rho40,mu40_mPas,cp40,k40,gpu_flow_for_limit_lpm\n";
     for (const auto& name : list) {
         auto fl = makeCoolant(name);
         const FluidProps p = fl->props(40.0);
@@ -638,6 +740,8 @@ int cmdCoolantCompare(const Args& a) {
         const double q = bisect(chipPeak, 0.01, 5.0, limit, true);
         std::printf(" %-7s %8.1f %12.3f %8.0f %7.4f   %.4f L/min\n", name.c_str(), g ? g->freezingPointC() : 0.0, p.mu * 1e3,
                     p.cp, p.k, q);
+        fp << name << ',' << (g ? g->freezingPointC() : 0.0) << ',' << p.rho << ',' << p.mu * 1e3 << ',' << p.cp << ',' << p.k
+           << ',' << q << '\n';
     }
     std::printf("\n coolant  case                 flow L/min  head kPa  pump W   peak C  return C");
     if (plant) std::printf("  CDU UA  fans W  chiller W  cooling W  pPUE");
@@ -802,13 +906,14 @@ int usage() {
     std::printf(
         "mfsim - microfluidic cooling data-center simulation (headless)\n\n"
         "  mfsim info            [--config F]\n"
-        "  mfsim steady          [--config F] [--level chip|server|rack]\n"
+        "  mfsim steady          [--config F] [--level chip|server|rack|plant] [--out f.csv]\n"
         "  mfsim run             [--config F] [--level L] [--duration 30] [--dt 0.005] [--every 0.1] [--out f.csv]\n"
         "  mfsim resolution      [--config F]\n"
         "  mfsim sweep-viscosity [--config F] [--level L] [--scales 1,2,4] [--out f.csv]\n"
         "  mfsim uneven-load     [--config F]\n"
         "  mfsim climate-sweep   [--config F] [--temps 0,10,20,30,40]\n"
         "  mfsim coolant-compare [--config F] [--level rack|plant] [--coolants water,PG25,PG40,EG25]\n"
+        "  mfsim hydraulics      [--config F] [--out dir]            loop pressure budget, pump/system curves\n"
         "  mfsim cosim           [--config F] [--trace results/ml/activity_trace.csv] [--coolants water,PG25]\n"
         "                        [--lead 60] [--tail 300] [--time-scale 1] [--job-servers 8] [--plant on|off]\n\n"
         "Levels: chip | server | rack (fixed 35 C supply) | plant (rack + CDU + dry cooler + trim chiller)\n"
@@ -831,6 +936,7 @@ int main(int argc, char** argv) {
         if (a.cmd == "climate-sweep") return cmdClimateSweep(a);
         if (a.cmd == "coolant-compare") return cmdCoolantCompare(a);
         if (a.cmd == "cosim") return cmdCosim(a);
+        if (a.cmd == "hydraulics") return cmdHydraulics(a);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 2;
