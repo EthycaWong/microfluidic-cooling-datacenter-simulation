@@ -13,6 +13,7 @@
 // Common: --viscosity X (viscosity multiplier), --level chip|server|rack (overrides the config).
 #include "Units.hpp"
 #include "cfd/DuctFlow.hpp"
+#include "cfd/JobChannel.hpp"
 #include "cfd/Presets.hpp"
 #include "config/Config.hpp"
 
@@ -1023,6 +1024,91 @@ int cmdCfd(const Args& a) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------------------------------
+/// The recorded CNN job driving the Navier-Stokes microchannel slice (and the reduced chip model).
+int cmdCfdJob(const Args& a) {
+    SimConfig c = configFrom(a);
+    const std::string tracePath = a.get("trace", "results/ml/activity_trace.csv");
+    const std::string outDir = a.get("out", "results/cfd_job");
+    std::filesystem::create_directories(outDir);
+    std::vector<std::string> coolants;
+    {
+        std::stringstream ss(a.get("coolants", "water,PG25"));
+        std::string item;
+        while (std::getline(ss, item, ',')) coolants.push_back(item);
+    }
+    const double lead = a.num("lead", 5.0), tail = a.num("tail", 20.0);
+    std::ofstream js(outDir + "/summary.json");
+    js << "{\n  \"trace\": \"" << tracePath << "\",\n  \"runs\": [\n";
+    for (size_t ci = 0; ci < coolants.size(); ++ci) {
+        cfd::JobChannelParams jp;
+        jp.coolant = coolants[ci];
+        jp.gpu = c.server.gpu;
+        jp.inletC = a.num("inlet", 35.0);
+        jp.velocity = a.num("velocity", 1.667);
+        jp.cellsAcross = static_cast<int>(a.num("n", 12));
+        jp.dt = a.num("dt", 0.05);
+        auto job = std::make_shared<JobTraceWorkload>(tracePath, lead, 1.0, false);
+        cfd::JobChannel jc(jp, job);
+        const auto t0 = std::chrono::steady_clock::now();
+        const long flowSteps = jc.solveFlow();
+        const double flowSecs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("\n== %s: Navier-Stokes microchannel slice driven by the CNN job ==\n", jc.fluid().name().c_str());
+        std::printf("flow field: %ld Navier-Stokes steps (%.1f s), Re_Dh %.0f, grid %d x %d, max |div u| %.1e 1/s\n", flowSteps,
+                    flowSecs, jc.reynolds(), jc.solver().nx(), jc.solver().ny(), jc.solver().maxDivergence());
+        auto f = openCsv(outDir + "/job_" + coolants[ci] + ".csv");
+        f << "t_s,phase,u,gpu_power_W,q_mean_W_m2,ns_wall_mean_C,ns_wall_max_C,ns_outlet_C,ns_heat_in_W,ns_heat_out_W,"
+             "chip_peak_C,chip_outlet_C,sweeps\n";
+        struct Acc { double n = 0, wall = 0, wallMax = -1e9, out = 0, chip = 0, chipMax = -1e9; };
+        std::map<std::string, Acc> acc;
+        double peakWall = -1e9, peakChip = -1e9, inSum = 0, outSum = 0;
+        std::string peakPhase;
+        const auto t1 = std::chrono::steady_clock::now();
+        const int steps = static_cast<int>(std::ceil((lead + jc.duration() + tail) / jp.dt));
+        const double snapAt = a.num("snapshot-at", -1.0);
+        bool snapped = snapAt < 0;
+        for (int n = 0; n < steps; ++n) {
+            const cfd::JobChannelSample s = jc.step();
+            if (!snapped && s.t >= snapAt) {
+                writeCfdFields(jc.solver(), outDir + "/snapshot_" + coolants[ci]);
+                snapped = true;
+            }
+            f << s.t << ',' << s.phase << ',' << s.u << ',' << s.powerW << ',' << s.qMean << ',' << s.wallMeanC << ','
+              << s.wallMaxC << ',' << s.outletC << ',' << s.heatInW << ',' << s.heatOutW << ',' << s.chipPeakC << ','
+              << s.chipOutletC << ',' << s.sweeps << '\n';
+            Acc& A = acc[s.phase];
+            A.n += 1; A.wall += s.wallMeanC; A.wallMax = std::max(A.wallMax, s.wallMaxC); A.out += s.outletC;
+            A.chip += s.chipPeakC; A.chipMax = std::max(A.chipMax, s.chipPeakC);
+            if (s.wallMaxC > peakWall) { peakWall = s.wallMaxC; peakPhase = s.phase; }
+            peakChip = std::max(peakChip, s.chipPeakC);
+            inSum += s.heatInW;
+            outSum += s.heatOutW;
+        }
+        const double runSecs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t1).count();
+        std::printf("followed %.1f s of the job in %d implicit energy steps (%.1f s wall)\n", lead + jc.duration() + tail, steps, runSecs);
+        std::printf("  phase    NS wall mean   NS wall max   NS outlet   chip-model peak   (all C)\n");
+        for (const char* ph : {"waiting", "setup", "train", "eval", "scan", "idle", "done"}) {
+            if (!acc.count(ph)) continue;
+            const Acc& A = acc[ph];
+            std::printf("  %-8s %12.2f %13.2f %11.2f %17.2f\n", ph, A.wall / A.n, A.wallMax, A.out / A.n, A.chip / A.n);
+        }
+        std::printf("  hottest rib wall (Navier-Stokes) %.2f C during %s; hottest silicon (chip model) %.2f C\n", peakWall,
+                    peakPhase.c_str(), peakChip);
+        std::printf("  energy: heat into the channel %.4f J, carried out by the coolant %.4f J (stored: the rest)\n",
+                    inSum * jp.dt, outSum * jp.dt);
+        js << "    {\"coolant\": \"" << coolants[ci] << "\", \"csv\": \"" << outDir << "/job_" << coolants[ci]
+           << ".csv\", \"re\": " << jc.reynolds() << ", \"peak_wall_C\": " << peakWall << ", \"peak_chip_C\": " << peakChip
+           << ", \"train_wall_mean_C\": " << (acc.count("train") ? acc["train"].wall / acc["train"].n : 0.0)
+           << ", \"train_outlet_C\": " << (acc.count("train") ? acc["train"].out / acc["train"].n : 0.0)
+           << ", \"scan_wall_mean_C\": " << (acc.count("scan") ? acc["scan"].wall / acc["scan"].n : 0.0)
+           << ", \"heat_in_J\": " << inSum * jp.dt << ", \"heat_out_J\": " << outSum * jp.dt << "}"
+           << (ci + 1 < coolants.size() ? "," : "") << "\n";
+    }
+    js << "  ]\n}\n";
+    std::printf("\nwrote %s/job_*.csv and summary.json\n", outDir.c_str());
+    return 0;
+}
+
 int usage() {
     std::printf(
         "mfsim - microfluidic cooling data-center simulation (headless)\n\n"
@@ -1038,6 +1124,8 @@ int usage() {
         "  mfsim cfd             --case lid-cavity|heated-cavity|rayleigh-benard|mixed-convection|microchannel|\n"
         "                               poiseuille|duct [--value Re/Ra/velocity] [--n cells] [--time t | --tol 1e-5]\n"
         "                        [--left-u X --left-v X --left-T X --left-q X --left-outflow --left-insulated ...]\n"
+        "  mfsim cfd-job         [--config F] [--trace results/ml/activity_trace.csv] [--coolants water,PG25]\n"
+        "                        [--velocity 1.667] [--n 12] [--dt 0.05]   CNN job driving the Navier-Stokes slice\n"
         "  mfsim cosim           [--config F] [--trace results/ml/activity_trace.csv] [--coolants water,PG25]\n"
         "                        [--lead 60] [--tail 300] [--time-scale 1] [--job-servers 8] [--plant on|off]\n\n"
         "Levels: chip | server | rack (fixed 35 C supply) | plant (rack + CDU + dry cooler + trim chiller)\n"
@@ -1062,6 +1150,7 @@ int main(int argc, char** argv) {
         if (a.cmd == "cosim") return cmdCosim(a);
         if (a.cmd == "hydraulics") return cmdHydraulics(a);
         if (a.cmd == "cfd") return cmdCfd(a);
+        if (a.cmd == "cfd-job") return cmdCfdJob(a);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 2;

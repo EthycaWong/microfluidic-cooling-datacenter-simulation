@@ -145,6 +145,11 @@ def run_experiments() -> None:
     mfsim("cfd", "--case", "duct", "--width", "200e-6", "--height", "500e-6", "--n", "64", "--out", str(cfd / "duct"))
     mfsim("cfd", "--case", "microchannel", "--out", str(cfd / "microchannel"))
 
+    if (ROOT / "results" / "ml" / "activity_trace.csv").exists():
+        print("CNN job on the Navier-Stokes microchannel (about 1.5 min) ...")
+        mfsim("cfd-job", "--config", "configs/plant_baseline.json", "--trace", "results/ml/activity_trace.csv",
+              "--coolants", "water,PG25", "--snapshot-at", "65", "--out", str(RES / "cfd_job"))
+
     print("24-hour day (about a minute) ...")
     rng = np.random.default_rng(7)
     with open(RES / "day_workload.csv", "w") as f:
@@ -642,6 +647,74 @@ def fig_cfd_flows(facts: dict) -> str:
     return save(fig, "fig13_cfd_flows.png")
 
 
+def fig_cfd_job(facts: dict) -> str | None:
+    d = RES / "cfd_job"
+    if not (d / "summary.json").exists():
+        return None
+    summ = json.loads((d / "summary.json").read_text())["runs"]
+    runs = {r["coolant"]: r for r in summ}
+    data = {k: table(Path(r["csv"]) if Path(r["csv"]).is_absolute() else ROOT / r["csv"]) for k, r in runs.items()}
+    w = data["water"]
+    t = col(w, "t_s")
+    fig = plt.figure(figsize=(17, 9.5))
+    gs = fig.add_gridspec(2, 3, hspace=0.45, wspace=0.35)
+    ax = fig.add_subplot(gs[0, :2])
+    phases = [r["phase"] for r in w]
+    start = 0
+    shade = {"train": "#dbeafe", "eval": "#ede9fe", "scan": "#dcfce7"}
+    for i in range(1, len(t) + 1):
+        if i == len(t) or phases[i] != phases[start]:
+            if phases[start] in shade:
+                ax.axvspan(t[start], t[i - 1], color=shade[phases[start]], lw=0)
+            start = i
+    for k, c in [("water", "#2563eb"), ("PG25", "#dc2626")]:
+        if k in data:
+            ax.plot(col(data[k], "t_s"), col(data[k], "ns_wall_max_C"), color=c, lw=1.2, label=f"rib wall max, Navier-Stokes, {k}")
+            ax.plot(col(data[k], "t_s"), col(data[k], "chip_peak_C"), color=c, lw=1.0, ls="--", alpha=0.8,
+                    label=f"silicon peak, chip model, {k}")
+    ax.axhline(85, color="#dc2626", lw=0.8, ls=":")
+    ax.set_xlabel("job time (s)")
+    ax.set_ylabel("°C")
+    ax.set_title("The CNN job driving the Navier-Stokes microchannel (shading: train / eval / scan)")
+    ax.legend(fontsize=8, ncol=2, loc="lower center")
+    ax = fig.add_subplot(gs[0, 2])
+    ax.plot(t, col(w, "gpu_power_W"), color="#111827", lw=0.8)
+    ax.set_xlabel("job time (s)")
+    ax.set_ylabel("GPU power (W)")
+    a2 = ax.twinx()
+    a2.plot(t, col(w, "q_mean_W_m2") / 1e3, color="#ea580c", lw=0.6, alpha=0.6)
+    a2.set_ylabel("rib-wall heat flux (kW/m²)", color="#ea580c")
+    a2.grid(False)
+    ax.set_title("Activity → GPU power → wall heat flux")
+    ax = fig.add_subplot(gs[1, :2])
+    snap = d / "snapshot_water" / "fields.csv"
+    if snap.exists():
+        T, _ = field(snap, "T")
+        im = ax.imshow(T, origin="lower", cmap=HEAT, extent=[0, 20, 0, 200], aspect="auto", vmin=35, vmax=85)
+        fig.colorbar(im, ax=ax, shrink=0.9, label="°C")
+        ax.set_title("Water temperature during training (job time 65 s): the hotspot heats the middle of the channel most")
+        ax.set_xlabel("distance along the channel (mm)")
+        ax.set_ylabel("across the gap (µm)")
+        ax.grid(False)
+    ax = fig.add_subplot(gs[1, 2])
+    names = [k for k in ("water", "PG25") if k in runs]
+    x = np.arange(len(names))
+    vals = [("train_wall_mean_C", "NS wall, train mean"), ("peak_wall_C", "NS wall, peak"), ("peak_chip_C", "chip silicon, peak")]
+    for j, (key, lab) in enumerate(vals):
+        v = [runs[n][key] for n in names]
+        ax.bar(x + (j - 1) * 0.27, v, 0.27, label=lab, color=["#93c5fd", "#2563eb", "#f59e0b"][j])
+        for i, vv in enumerate(v):
+            ax.text(i + (j - 1) * 0.27, vv + 0.5, f"{vv:.1f}", ha="center", fontsize=8)
+    ax.axhline(85, color="#dc2626", lw=0.8, ls=":")
+    ax.set_xticks(x, names)
+    ax.set_ylim(30, 100)
+    ax.set_ylabel("°C")
+    ax.set_title("Same job, same 0.5 L/min: water vs PG25")
+    ax.legend(fontsize=7, loc="upper left")
+    facts["cfdjob"] = runs
+    return save(fig, "fig14_cfd_cnn_job.png")
+
+
 def fig_ml(facts: dict) -> str | None:
     src = ROOT / "results" / "ml" / "report.png"
     if not src.exists():
@@ -701,7 +774,7 @@ def write_report(figs: dict, f: dict) -> None:
                            "Rack: sharing flow between servers", "Hydraulics: pressure budget and pump curves",
                            "Viscosity sensitivity", "Practical coolants", "Climate and the cooling plant",
                            "Dynamics: a load step", "A full day", "CNN workload",
-                           "Navier-Stokes verification", "Boundary-driven flows"], 1):
+                           "Navier-Stokes verification", "Boundary-driven flows", "The CNN job on the Navier-Stokes solver"], 1):
         L.append(f"{i}. [{t}](#{i}-{t.lower().replace(':', '').replace(',', '').replace(' ', '-')})")
     L.append("")
 
@@ -883,6 +956,35 @@ def write_report(figs: dict, f: dict) -> None:
              f"This confirms that the flow is thermally developing over the whole channel, as the chip model assumes. "
              f"The water leaves at {mc['tb_out']:.1f} °C.\n")
 
+    if "cfdjob" in figs:
+        cj = f["cfdjob"]
+        wtr, pg = cj["water"], cj.get("PG25")
+        L.append("## 14. The CNN job on the Navier-Stokes solver\n")
+        L.append(f"![CNN job on Navier-Stokes]({figs['cfdjob']})\n")
+        L.append("The recorded PyTorch job (section 11) also drives the first-principles solver:")
+        L.append("1. Device activity u(t) sets the GPU power, P = 60 + u (300 − 60) W.")
+        L.append("2. One channel's share of that power enters the water through the two silicon rib walls of the "
+                 "microchannel slice, shaped along the flow like the GPU's hotspot (the channel that crosses it).")
+        L.append("3. The velocity field comes from the full Navier-Stokes equations. Buoyancy is negligible in this "
+                 "forced flow, so the flow does not change with temperature and is solved once.")
+        L.append("4. The energy equation is then marched implicitly through the whole job, and the reduced chip model "
+                 "follows the same trace for comparison.\n")
+        L.append(f"- **Two independent models agree:** with water, the hottest rib wall in the Navier-Stokes solution "
+                 f"reaches **{wtr['peak_wall_C']:.1f} °C** during training. The chip model's hottest silicon reaches "
+                 f"**{wtr['peak_chip_C']:.1f} °C**. They differ in geometry (2-D slice vs. 3-D die) and in what they "
+                 "report (wall surface vs. silicon node), yet they are within a few kelvin.")
+        L.append(f"- **Energy conservation over the job:** {wtr['heat_in_J']:.2f} J entered the channel and "
+                 f"{wtr['heat_out_J']:.2f} J left with the water.")
+        if pg:
+            L.append(f"- **PG25 under the same job and flow:** the rib wall peaks at **{pg['peak_wall_C']:.1f} °C** "
+                     f"(chip model {pg['peak_chip_C']:.1f} °C), against {wtr['peak_wall_C']:.1f} °C with water, and "
+                     f"the training-phase mean rises from {wtr['train_wall_mean_C']:.1f} to {pg['train_wall_mean_C']:.1f} °C. "
+                     "The Navier-Stokes solution confirms what the reduced model found: glycol's poorer thermal "
+                     "properties cost cooling performance under a real workload.")
+        L.append("- **The water responds to the workload within milliseconds:** the transit time is about 12 ms. Wall "
+                 "temperatures therefore follow every burst of the on-demand scanning phase, while the loop-level "
+                 "thermal mass (section 9) smooths the slower plant response.\n")
+
     L.append("## Limitations\n")
     L.append("- **Assumed values:** the hotspot pattern, idle powers, and the cold-plate, quick-disconnect, CDU, "
              "dry-cooler and pump curves are assumptions; see [parameters.md](../parameters.md).")
@@ -908,6 +1010,9 @@ def main() -> None:
             "climate": fig_climate(facts), "step": fig_step(facts), "day": fig_day(facts)}
     figs["cfdv"] = fig_cfd_verification(facts)
     figs["cfdf"] = fig_cfd_flows(facts)
+    cj = fig_cfd_job(facts)
+    if cj:
+        figs["cfdjob"] = cj
     ml = fig_ml(facts)
     if ml:
         figs["ml"] = ml

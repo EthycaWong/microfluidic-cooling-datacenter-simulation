@@ -44,6 +44,7 @@ add_library(mfcore STATIC
   src/core/cfd/NavierStokes2D.cpp
   src/core/cfd/DuctFlow.cpp
   src/core/cfd/Presets.cpp
+  src/core/cfd/JobChannel.cpp
 )
 target_include_directories(mfcore PUBLIC src/core)
 target_link_libraries(mfcore PUBLIC nlohmann_json::nlohmann_json)

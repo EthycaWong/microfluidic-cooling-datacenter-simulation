@@ -19,6 +19,10 @@ struct Side {
     ThermalBC thermal = ThermalBC::HeatFlux;
     double T = 0.0;               ///< fixed temperature (FixedTemperature), C or K
     double q = 0.0;               ///< heat flux INTO the fluid, W/m^2 (HeatFlux; 0 = adiabatic)
+    /// Optional shape of the heat flux along the wall (any number of equal segments, mean 1), e.g. a
+    /// GPU hotspot; the local flux is q * shape(position).
+    std::vector<double> qShape;
+    double qAt(double frac) const;
 };
 
 /// Physical and numerical set-up. SI units; non-dimensional cases simply use L = 1 etc.
@@ -59,6 +63,19 @@ public:
     /// Step until the largest relative change rate of u, v, T falls below tol (per unit of the
     /// reference time scale tScale), or maxSteps; returns true when converged.
     bool runToSteady(double tol, double tScale, int maxSteps = 2000000);
+    /// Advance only the energy equation by dt with the current velocity field held fixed
+    /// (backward Euler, first-order upwind convection, Gauss-Seidel). Valid when buoyancy is
+    /// negligible so the flow does not depend on temperature (forced convection); unconditionally
+    /// stable, so dt can follow a workload trace instead of the CFL limit. Returns sweeps used.
+    int stepEnergyImplicit(double dt, double tol = 1e-7, int maxSweeps = 5000);
+    /// Fluid temperature on a wall (mean / max over its faces), from the boundary ghost values.
+    double wallTemperatureMean(int which) const;
+    double wallTemperatureMax(int which) const;
+    /// Net heat leaving through open boundaries (advection, plus conduction through fixed-T inflow
+    /// faces), W per metre of depth (2-D).
+    double advectedHeat(double rhoCp) const;
+    /// Heat entering through flux walls, W per metre of depth.
+    double wallHeatInput() const;
     void reset();
 
     Params& params() { return p_; }

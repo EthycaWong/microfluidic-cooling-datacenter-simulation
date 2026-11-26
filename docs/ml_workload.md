@@ -96,6 +96,10 @@ With flow following the job, idle pumping almost vanishes and both coolants resp
 
 In the 2-minute job the dry-cooler fans used about 1 % of training-phase cooling energy (0.05 of 6.0 kJ). In the 18-minute job the loop warms to its setpoint and the fan controller has to work: 25 % of training cooling. So conclusions about cooling energy depend on job length relative to the plant's thermal time constants (minutes). Short bursts are buffered; long training runs reach steady state, where the coolant and climate results of [parameters.md](parameters.md) §5b–7c apply.
 
+### The same job on the Navier–Stokes solver
+
+The job also drives the first-principles 2-D Navier–Stokes + energy solver: GPU power becomes a hotspot-shaped heat flux on the silicon rib walls of a microchannel. With water, the hottest rib wall reaches 83.1 °C against the chip model's 81.7 °C. With PG25 the figures are 92.8 °C against 88.9 °C. See [cfd.md](cfd.md#the-cnn-workload-on-the-navierstokes-solver) and report section 14.
+
 ## How to run it
 
 ```bash

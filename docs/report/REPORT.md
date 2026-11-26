@@ -19,6 +19,7 @@ The model is described in the [README](../../README.md) and its inputs in [param
 11. [CNN workload](#11-cnn-workload)
 12. [Navier-Stokes verification](#12-navier-stokes-verification)
 13. [Boundary-driven flows](#13-boundary-driven-flows)
+14. [The CNN job on the Navier-Stokes solver](#14-the-cnn-job-on-the-navier-stokes-solver)
 
 ## 1. Chip: where the heat goes
 
@@ -127,6 +128,21 @@ Each case is set entirely by its boundaries. Every wall has a prescribed velocit
 - **Heated cavity:** with all walls at rest, buoyancy alone drives a single circulating cell. Hot fluid rises along the hot wall and sinks along the cold one, and thin thermal boundary layers form.
 - **Rayleigh-Bénard:** heated from below, the fluid conducts (Nu = 1.00 at Ra = 1000) until it passes the critical Rayleigh number (about 1708). Then convection rolls carry more heat: Nu = 3.91 at Ra = 1e+05.
 - **Microchannel slice:** water at 1.67 m/s between ribs at 65 °C. The local Nusselt number falls from about 71 near the inlet to 7.7 at 20 mm, still above the fully developed 7.54. This confirms that the flow is thermally developing over the whole channel, as the chip model assumes. The water leaves at 45.9 °C.
+
+## 14. The CNN job on the Navier-Stokes solver
+
+![CNN job on Navier-Stokes](fig14_cfd_cnn_job.png)
+
+The recorded PyTorch job (section 11) also drives the first-principles solver:
+1. Device activity u(t) sets the GPU power, P = 60 + u (300 − 60) W.
+2. One channel's share of that power enters the water through the two silicon rib walls of the microchannel slice, shaped along the flow like the GPU's hotspot (the channel that crosses it).
+3. The velocity field comes from the full Navier-Stokes equations. Buoyancy is negligible in this forced flow, so the flow does not change with temperature and is solved once.
+4. The energy equation is then marched implicitly through the whole job, and the reduced chip model follows the same trace for comparison.
+
+- **Two independent models agree:** with water, the hottest rib wall in the Navier-Stokes solution reaches **83.1 °C** during training. The chip model's hottest silicon reaches **81.7 °C**. They differ in geometry (2-D slice vs. 3-D die) and in what they report (wall surface vs. silicon node), yet they are within a few kelvin.
+- **Energy conservation over the job:** 948.96 J entered the channel and 948.96 J left with the water.
+- **PG25 under the same job and flow:** the rib wall peaks at **92.8 °C** (chip model 88.9 °C), against 83.1 °C with water, and the training-phase mean rises from 63.0 to 68.7 °C. The Navier-Stokes solution confirms what the reduced model found: glycol's poorer thermal properties cost cooling performance under a real workload.
+- **The water responds to the workload within milliseconds:** the transit time is about 12 ms. Wall temperatures therefore follow every burst of the on-demand scanning phase, while the loop-level thermal mass (section 9) smooths the slower plant response.
 
 ## Limitations
 

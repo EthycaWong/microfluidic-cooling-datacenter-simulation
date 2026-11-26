@@ -7,6 +7,13 @@
 
 namespace mf::cfd {
 
+double Side::qAt(double frac) const {
+    if (qShape.empty()) return q;
+    const int n = static_cast<int>(qShape.size());
+    const int k = std::clamp(static_cast<int>(frac * n), 0, n - 1);
+    return q * qShape[k];
+}
+
 NavierStokes2D::NavierStokes2D(const Params& p) : p_(p) {
     if (p_.nx < 2 || p_.ny < 2) throw std::runtime_error("NavierStokes2D: grid must be at least 2x2");
     reset();
@@ -78,18 +85,20 @@ void NavierStokes2D::applyVelocityBC() {
 
 void NavierStokes2D::applyTemperatureBC() {
     const int nx = p_.nx, ny = p_.ny;
-    auto ghost = [&](const Side& s, double inside, double h) {
+    auto ghost = [&](const Side& s, double inside, double h, double frac) {
         if (s.velocity == VelocityBC::Outflow) return inside;               // zero gradient
         if (s.thermal == ThermalBC::FixedTemperature) return 2.0 * s.T - inside;
-        return inside + s.q * h / p_.k;                                      // flux into the fluid
+        return inside + s.qAt(frac) * h / p_.k;                              // flux into the fluid
     };
     for (int j = 1; j <= ny; ++j) {
-        Tm(0, j) = ghost(p_.left, Tm(1, j), dx_);
-        Tm(nx + 1, j) = ghost(p_.right, Tm(nx, j), dx_);
+        const double fr = (j - 0.5) / ny;
+        Tm(0, j) = ghost(p_.left, Tm(1, j), dx_, fr);
+        Tm(nx + 1, j) = ghost(p_.right, Tm(nx, j), dx_, fr);
     }
     for (int i = 1; i <= nx; ++i) {
-        Tm(i, 0) = ghost(p_.bottom, Tm(i, 1), dy_);
-        Tm(i, ny + 1) = ghost(p_.top, Tm(i, ny), dy_);
+        const double fr = (i - 0.5) / nx;
+        Tm(i, 0) = ghost(p_.bottom, Tm(i, 1), dy_, fr);
+        Tm(i, ny + 1) = ghost(p_.top, Tm(i, ny), dy_, fr);
     }
 }
 
@@ -213,6 +222,108 @@ bool NavierStokes2D::runToSteady(double tol, double tScale, int maxSteps) {
         if (n > 20 && rate < tol) return true;
     }
     return false;
+}
+
+// ---- energy only, frozen flow, backward Euler ------------------------------------------------------
+int NavierStokes2D::stepEnergyImplicit(double dt, double tol, int maxSweeps) {
+    const int nx = p_.nx, ny = p_.ny;
+    const double idx = 1.0 / dx_, idy = 1.0 / dy_, ax = p_.alpha * idx * idx, ay = p_.alpha * idy * idy;
+    const std::vector<double> told = t_;
+    auto fixedFace = [](const Side& sd) { return sd.velocity == VelocityBC::Wall && sd.thermal == ThermalBC::FixedTemperature; };
+    int sweep = 0;
+    for (; sweep < maxSweeps; ++sweep) {
+        applyTemperatureBC(); // ghosts follow the current iterate (fixed T, flux, outflow)
+        double maxd = 0.0;
+        for (int i = 1; i <= nx; ++i)
+            for (int j = 1; j <= ny; ++j) {
+                const double ue = U(i, j), uw = U(i - 1, j), vn = V(i, j), vs = V(i, j - 1);
+                // Convected face temperatures: upwind cell, or the wall temperature on a fixed-T inflow face.
+                const double te = (i == nx && fixedFace(p_.right)) ? p_.right.T : Tm(i + 1, j);
+                const double tw = (i == 1 && fixedFace(p_.left)) ? p_.left.T : Tm(i - 1, j);
+                const double tn = (j == ny && fixedFace(p_.top)) ? p_.top.T : Tm(i, j + 1);
+                const double ts = (j == 1 && fixedFace(p_.bottom)) ? p_.bottom.T : Tm(i, j - 1);
+                const double aP = 1.0 / dt + std::max(ue, 0.0) * idx + std::max(-uw, 0.0) * idx + 2 * ax +
+                                  std::max(vn, 0.0) * idy + std::max(-vs, 0.0) * idy + 2 * ay;
+                const double rhs = told[i * (ny + 2) + j] / dt + std::max(-ue, 0.0) * idx * te + std::max(uw, 0.0) * idx * tw +
+                                   std::max(-vn, 0.0) * idy * tn + std::max(vs, 0.0) * idy * ts +
+                                   ax * (Tm(i + 1, j) + Tm(i - 1, j)) + ay * (Tm(i, j + 1) + Tm(i, j - 1));
+                const double tnew = rhs / aP;
+                maxd = std::max(maxd, std::abs(tnew - Tm(i, j)));
+                Tm(i, j) = tnew;
+            }
+        if (maxd < tol) { ++sweep; break; }
+    }
+    applyTemperatureBC();
+    time_ += dt;
+    dt_ = dt;
+    ++steps_;
+    return sweep;
+}
+
+double NavierStokes2D::wallTemperatureMean(int which) const {
+    const int nx = p_.nx, ny = p_.ny;
+    double s = 0.0;
+    if (which == 0) for (int j = 1; j <= ny; ++j) s += 0.5 * (Tm(0, j) + Tm(1, j));
+    if (which == 1) for (int j = 1; j <= ny; ++j) s += 0.5 * (Tm(nx + 1, j) + Tm(nx, j));
+    if (which == 2) for (int i = 1; i <= nx; ++i) s += 0.5 * (Tm(i, 0) + Tm(i, 1));
+    if (which == 3) for (int i = 1; i <= nx; ++i) s += 0.5 * (Tm(i, ny + 1) + Tm(i, ny));
+    return s / (which < 2 ? ny : nx);
+}
+
+double NavierStokes2D::wallTemperatureMax(int which) const {
+    const int nx = p_.nx, ny = p_.ny;
+    double m = -1e300;
+    if (which == 0) for (int j = 1; j <= ny; ++j) m = std::max(m, 0.5 * (Tm(0, j) + Tm(1, j)));
+    if (which == 1) for (int j = 1; j <= ny; ++j) m = std::max(m, 0.5 * (Tm(nx + 1, j) + Tm(nx, j)));
+    if (which == 2) for (int i = 1; i <= nx; ++i) m = std::max(m, 0.5 * (Tm(i, 0) + Tm(i, 1)));
+    if (which == 3) for (int i = 1; i <= nx; ++i) m = std::max(m, 0.5 * (Tm(i, ny + 1) + Tm(i, ny)));
+    return m;
+}
+
+double NavierStokes2D::advectedHeat(double rhoCp) const {
+    // Upwind face temperatures, consistent with stepEnergyImplicit.
+    const int nx = p_.nx, ny = p_.ny;
+    double h = 0.0;
+    auto face = [](const Side& sd, double ghost) {
+        return (sd.velocity == VelocityBC::Wall && sd.thermal == ThermalBC::FixedTemperature) ? sd.T : ghost;
+    };
+    for (int j = 1; j <= ny; ++j) {
+        const double ul = U(0, j), ur = U(nx, j);
+        h -= ul * (ul > 0 ? face(p_.left, Tm(0, j)) : Tm(1, j)) * dy_;
+        h += ur * (ur > 0 ? Tm(nx, j) : face(p_.right, Tm(nx + 1, j))) * dy_;
+    }
+    for (int i = 1; i <= nx; ++i) {
+        const double vb = V(i, 0), vt = V(i, ny);
+        h -= vb * (vb > 0 ? face(p_.bottom, Tm(i, 0)) : Tm(i, 1)) * dx_;
+        h += vt * (vt > 0 ? Tm(i, ny) : face(p_.top, Tm(i, ny + 1))) * dx_;
+    }
+    double heat = rhoCp * h;
+    // Conduction out through open fixed-temperature faces (e.g. back-conduction at a cold inlet).
+    auto open = [](const Side& sd, double un) {
+        return sd.velocity == VelocityBC::Wall && sd.thermal == ThermalBC::FixedTemperature && std::abs(un) > 0;
+    };
+    for (int j = 1; j <= ny; ++j) {
+        if (open(p_.left, p_.left.u)) heat += p_.k * 2.0 * (Tm(1, j) - p_.left.T) / dx_ * dy_;
+        if (open(p_.right, p_.right.u)) heat += p_.k * 2.0 * (Tm(nx, j) - p_.right.T) / dx_ * dy_;
+    }
+    for (int i = 1; i <= nx; ++i) {
+        if (open(p_.bottom, p_.bottom.v)) heat += p_.k * 2.0 * (Tm(i, 1) - p_.bottom.T) / dy_ * dx_;
+        if (open(p_.top, p_.top.v)) heat += p_.k * 2.0 * (Tm(i, ny) - p_.top.T) / dy_ * dx_;
+    }
+    return heat;
+}
+
+double NavierStokes2D::wallHeatInput() const {
+    double q = 0.0;
+    const Side* sides[4] = {&p_.left, &p_.right, &p_.bottom, &p_.top};
+    for (int k = 0; k < 4; ++k) {
+        const Side& s = *sides[k];
+        if (s.velocity == VelocityBC::Outflow || s.thermal != ThermalBC::HeatFlux) continue;
+        const int n = k < 2 ? p_.ny : p_.nx;
+        const double h = k < 2 ? dy_ : dx_;
+        for (int m = 1; m <= n; ++m) q += s.qAt((m - 0.5) / n) * h;
+    }
+    return q;
 }
 
 // ---- pressure solve: (-lap) p = -rhs, Jacobi-preconditioned conjugate gradients -------------------

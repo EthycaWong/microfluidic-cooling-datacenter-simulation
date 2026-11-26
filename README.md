@@ -10,12 +10,12 @@ A physics-based C++ simulation, with a live 3D viewer, of a liquid-cooled 42U se
 |---|---|---|
 | ![Server](docs/screenshots/server.png) | ![Chip](docs/screenshots/chip.png) | ![Charts](docs/screenshots/charts.png) |
 
-| Navier–Stokes: heated cavity (hot / cold walls, u = v = 0) | Rayleigh–Bénard convection | Microchannel slice (hot ribs, cold inflow) |
+| Navier–Stokes: heated cavity (hot / cold walls, u = v = 0) | Rayleigh–Bénard convection | CNN job driving the Navier–Stokes microchannel |
 |---|---|---|
-| ![Heated cavity](docs/screenshots/cfd_heated-cavity.png) | ![Rayleigh-Benard](docs/screenshots/cfd_rayleigh-benard.png) | ![Microchannel](docs/screenshots/cfd_microchannel.png) |
+| ![Heated cavity](docs/screenshots/cfd_heated-cavity.png) | ![Rayleigh-Benard](docs/screenshots/cfd_rayleigh-benard.png) | ![CNN job on Navier-Stokes](docs/screenshots/cfd_cnn_job.png) |
 
 **Documents:**
-- **[Results report](docs/report/REPORT.md):** 13 figures with written analysis, from chip to climate, the ML job and the Navier–Stokes checks, regenerated from the simulation.
+- **[Results report](docs/report/REPORT.md):** 14 figures with written analysis, from chip to climate, the ML job, the Navier–Stokes checks and the ML job on the Navier–Stokes solver, regenerated from the simulation.
 - **[Parameters and assumptions](docs/parameters.md):** every input, its source, and the hand calculations.
 - **[CNN workload](docs/ml_workload.md):** the PyTorch job and its co-simulation.
 - **[Navier–Stokes and energy equations](docs/cfd.md):** what is solved where, the 2-D solver, boundary conditions and benchmarks.
@@ -49,6 +49,7 @@ All numbers come from the simulation; the [results report](docs/report/REPORT.md
 | Real coolants? | **PG25 costs about 4× the pumping and 2.2× the cooling electricity of water.** Lower conductivity (−23 %) and heat capacity mean 55 % more flow on top of higher viscosity. PG40 costs about 4.5× the cooling electricity. |
 | Water use? | **Zero evaporation.** An evaporative tower would use about 9.5 L/h for the same heat. The trade-off is electricity on hot days: partial PUE is 1.010 at 25 °C, 1.074 at 30 °C and 1.134 at 40 °C. |
 | A full day (16–32 °C, afternoon peak load)? | 113 kWh IT, 4.2 kWh cooling, partial PUE 1.037, 0 L of water (a tower would evaporate about 124 L). |
+| The ML job on the Navier–Stokes solver? | The CNN's activity drives the hot rib walls of a Navier–Stokes microchannel. The rib wall peaks at **83.1 °C** with water against 81.7 °C in the chip model, and **92.8 °C** with PG25 against 88.9 °C. Two independent models agree, and energy is conserved exactly over the job. |
 | A real ML job? | The PyTorch CNN reaches 99.35 % on MNIST. With constant flow, cooling barely follows the job. **Variable flow with load feedforward** cuts cooling energy 36 % and keeps PG25 below 85 °C; feedback-only control overshot to 116 °C. |
 
 ---
@@ -182,6 +183,7 @@ supply ─ QD ─┬─ hose ─ GPU 1 microchannels ─ valve ─┬─ QD ─ 
 - **Method:** staggered (MAC) finite volumes and a Chorin projection, with the pressure Poisson equation solved by preconditioned conjugate gradients. The flow is divergence-free to about 1e-6 s⁻¹, with an adaptive time step.
 - **Boundary-driven:** every wall prescribes both velocity components (u, v). They default to 0 (no-slip) and can be changed to make a moving wall or an inflow, or the wall can be set to outflow. Every wall is also held at a fixed hot or cold temperature, given a fixed heat flux, or insulated. All of these can change while the flow runs.
 - **Cases:** lid-driven cavity, heated cavity, Rayleigh–Bénard, mixed convection, channel flow, a microchannel slice with real water properties, and a fully developed solve of the 200 × 500 µm duct.
+- **CNN workload on the solver:** the recorded PyTorch activity sets the GPU power, which becomes a hotspot-shaped heat flux on the microchannel's silicon rib walls. The flow is solved once with full Navier–Stokes; the energy equation then follows the job with an implicit step (173 s of job in about 4 s), side by side with the chip model.
 - **Benchmarks:**
 
   | Case | This solver | Published |
@@ -203,7 +205,7 @@ See [docs/cfd.md](docs/cfd.md).
 
 ## 3. Verification
 
-`ctest` runs 46 test cases (709 assertions) in about a minute:
+`ctest` runs 48 test cases (715 assertions) in about a minute:
 
 | Area | What is checked |
 |---|---|
@@ -214,7 +216,7 @@ See [docs/cfd.md](docs/cfd.md).
 | Server / rack | Valve auto-balance (also with PG25); unbalanced CPU flow; 42.7 °C mixed return; reverse-return evenness; pump operating point on its curve; PI hold; feedforward overshoot < 86 °C. |
 | Plant | ε-NTU limits; setpoint held on mild days; chiller and economizer on hot days; minimum fans on cold days; transient recovery after a load step; viscosity lowering CDU UA; freeze flag. |
 | ML trace | Replay timing, offset and scale; idle before and after the job; live file growth. |
-| Navier–Stokes | Duct f·Re and Nu vs Shah & London; Ghia lid cavity; de Vahl Davis heated cavity with heat in = heat out; Rayleigh–Bénard onset; channel pressure gradient, parabolic profile and mass conservation; walls at rest give no flow; reversing the lid mirrors the flow. |
+| Navier–Stokes | Duct f·Re and Nu vs Shah & London; Ghia lid cavity; de Vahl Davis heated cavity with heat in = heat out; Rayleigh–Bénard onset; channel pressure gradient, parabolic profile and mass conservation; walls at rest give no flow; reversing the lid mirrors the flow; the implicit energy step balances heat in and out; a CNN-style job heats the walls with energy conserved and agreement with the chip model. |
 
 ---
 
@@ -248,7 +250,7 @@ ctest --test-dir build --output-on-failure
 | Server (2) | Cut-away 4U server: GPU and CPU heat maps, hoses coloured by temperature, fans |
 | Chip (3) | Exploded die: silicon heat map, 50 microchannels coloured by coolant temperature, hotspot marker |
 | Charts (4) | Live dashboard over 1 / 10 / 60 min: temperatures, IT power, stacked cooling electricity, hydraulics, per-server bars, chip heat map with along-flow profiles, energy and partial PUE |
-| CFD (5) | 2-D Navier–Stokes + energy solver running live: temperature, speed, pressure or vorticity field, velocity arrows, tracer particles. Pick a case, then set each wall's u, v, hot / cold / insulated and outflow while it runs. |
+| CFD (5) | 2-D Navier–Stokes + energy solver running live: temperature, speed, pressure or vorticity field, velocity arrows, tracer particles. Pick a case, then set each wall's u, v, hot / cold / insulated and outflow while it runs. In the microchannel case, "Drive walls with the CNN job" replays the PyTorch job on the walls (`--cfd-job on`). |
 
 **Controls:** left-drag orbits, right-drag pans, the wheel zooms, Space pauses, and a double-click opens a server. The left panel sets:
 - the workload (sliders, square waves, live or replayed ML job, 2/4/8 job servers);
@@ -271,6 +273,7 @@ Useful flags: `--scene cfd --cfd-case rayleigh-benard`, `--scene charts`, `--spe
 | `mfsim climate-sweep --temps 0,10,20,30,40` | Cooling electricity and partial PUE vs outdoor temperature |
 | `mfsim uneven-load` | Half the rack busy, direct vs reverse return |
 | `mfsim hydraulics` | Loop pressure budget, pump and system curves |
+| `mfsim cfd-job --coolants water,PG25` | The recorded CNN job driving the Navier–Stokes microchannel walls, compared with the chip model |
 | `mfsim cfd --case heated-cavity --value 1e5` | 2-D Navier–Stokes + energy case. Wall overrides: `--left-u`, `--top-T`, `--bottom-insulated`, `--right-outflow`, … Also `--case duct` for the fully developed check |
 | `mfsim cosim --trace results/ml/activity_trace.csv` | Replay a recorded ML job on the rack and plant |
 
@@ -282,7 +285,7 @@ Common options: `--config F`, `--level`, `--coolant`, `--facility-coolant`, `--v
 .venv/bin/python analysis/make_report.py
 ```
 
-This reruns every experiment, including the Navier–Stokes cases (about 13 minutes), and rewrites [docs/report/REPORT.md](docs/report/REPORT.md) and its figures. `--no-sim` only redraws from saved data.
+This reruns every experiment, including the Navier–Stokes cases and the CNN job on the solver (about 15 minutes), and rewrites [docs/report/REPORT.md](docs/report/REPORT.md) and its figures. `--no-sim` only redraws from saved data.
 
 ### Machine-learning job
 
@@ -312,7 +315,7 @@ src/core/
   system/       server, rack (manifolds, pump control), cooling plant (CDU, dry cooler, chiller), data center
   workload/     constant / step / square / trace / ML job trace (replay + live)
   config/       JSON configs -> parameter structs
-  cfd/          2-D Navier-Stokes + energy (projection, MAC grid), fully developed duct flow, case presets
+  cfd/          2-D Navier-Stokes + energy (projection, MAC grid, implicit energy), duct flow, presets, CNN-job channel
 apps/mfsim/     experiments command-line tool
 apps/viewer/    raylib + raygui 3D viewer and live charts dashboard
 ml/             PyTorch CNN, page scanner, activity monitor, job report, run scripts

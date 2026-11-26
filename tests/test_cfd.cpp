@@ -1,9 +1,12 @@
 #include <doctest/doctest.h>
 #include "cfd/DuctFlow.hpp"
+#include "cfd/JobChannel.hpp"
 #include "cfd/Presets.hpp"
 #include "hydraulics/RectChannel.hpp"
 
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 
 using namespace mf;
 using namespace mf::cfd;
@@ -80,4 +83,49 @@ TEST_CASE("Boundary-driven: walls at rest give no flow; reversing the lid mirror
     a.runUntil(3.0);
     b.runUntil(3.0);
     for (int j = 1; j <= 16; j += 3) CHECK(b.uc(16 - 4 + 1, j) == doctest::Approx(-a.uc(4, j)).epsilon(1e-6));
+}
+
+TEST_CASE("Implicit energy step on a frozen Navier-Stokes flow conserves energy and matches the heat balance") {
+    Case c = makeCase("poiseuille", 100, 10);
+    c.params.bottom = Side{};
+    c.params.top = Side{};
+    c.params.bottom.q = 0.02; // heat flux walls (non-dimensional, k = 1)
+    c.params.top.q = 0.02;
+    c.params.k = 1.0;
+    NavierStokes2D s(c.params);
+    REQUIRE(s.runToSteady(1e-5, c.timeScale, 200000)); // velocity field
+    for (int n = 0; n < 400; ++n) s.stepEnergyImplicit(0.5); // large steps: unconditionally stable
+    const double rhoCp = c.params.k / c.params.alpha;
+    CHECK(s.advectedHeat(rhoCp) == doctest::Approx(s.wallHeatInput()).epsilon(1e-4)); // steady: in = out
+    // outlet bulk rise = 2 q L / (rho cp U h) with U = 1, h = 1, L = 10
+    CHECK(s.bulkTemperatureColumn(s.nx()) - 0.0 == doctest::Approx(2 * 0.02 * 10.0 / rhoCp).epsilon(0.02));
+}
+
+TEST_CASE("CNN-style job driving the Navier-Stokes microchannel: walls follow the load, energy conserved") {
+    const std::string path = "cfd_job_trace_test.csv";
+    {
+        std::ofstream f(path);
+        f << "t_s,u,phase,train_samples,infer_samples\n";
+        for (int k = 1; k <= 20; ++k) f << 0.1 * k << ",0.0,setup,0,0\n";
+        for (int k = 21; k <= 60; ++k) f << 0.1 * k << ",1.0,train,0,0\n";
+    }
+    JobChannelParams jp;
+    jp.gpu = ChipParams{};
+    jp.gpu.power.map.pattern = "hotspot";
+    jp.cellsAcross = 6;
+    jp.dt = 0.05;
+    JobChannel jc(jp, std::make_shared<JobTraceWorkload>(path, 0.0, 1.0, false));
+    jc.solveFlow();
+    double idleWall = 0, busyWall = 0, in = 0, out = 0, chipBusy = 0;
+    for (int n = 0; n < 120; ++n) { // 6 s
+        const JobChannelSample s = jc.step();
+        if (s.t > 1.5 && s.t < 2.0) idleWall = s.wallMaxC;
+        if (s.t > 5.5) { busyWall = s.wallMaxC; chipBusy = s.chipPeakC; }
+        in += s.heatInW;
+        out += s.heatOutW;
+    }
+    CHECK(busyWall > idleWall + 20.0);                          // 60 W -> 300 W heats the ribs
+    CHECK(out == doctest::Approx(in).epsilon(0.01));            // energy in = energy out (little storage)
+    CHECK(std::abs(busyWall - chipBusy) < 8.0);                 // independent models agree within a few K
+    std::remove(path.c_str());
 }

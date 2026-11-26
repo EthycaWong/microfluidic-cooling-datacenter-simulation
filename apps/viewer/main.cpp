@@ -4,6 +4,7 @@
 //                [--plant on|off] [--outdoor C] [--loads 1,1,...] [--coolant PG25]
 //                [--job live|replay] [--job-servers 2|4|8] [--live-trace F] [--replay-trace F]
 //                [--speed X] [--chart-window 0|1|2] [--scene rack|server|chip|charts|cfd] [--cfd-case NAME]
+//                [--cfd-job on --job-speed 5]   (CNN job driving the Navier-Stokes microchannel walls)
 //                [--screenshot out.png --frames 90]   (render, save a screenshot, exit)
 #include "Scenes.hpp"
 #include "Charts.hpp"
@@ -113,11 +114,18 @@ int main(int argc, char** argv) {
     app.s.chartWindow = std::clamp(std::stoi(arg(argc, argv, "--chart-window", "1")), 0, 2);
     app.s.server = std::clamp(std::stoi(arg(argc, argv, "--server", "8")) - 1, 0, rack.serverCount() - 1);
     app.s.branch = std::clamp(std::stoi(arg(argc, argv, "--chip", "0")), 0, 2);
+    app.cfd.gpu = cfg.server.gpu;
+    app.cfd.coolant = coolArg;
     const std::string cfdCase = arg(argc, argv, "--cfd-case", "");
     if (!cfdCase.empty() || sceneArg == "cfd") {
         const auto names = mf::cfd::caseNames();
         const auto it = std::find(names.begin(), names.end(), cfdCase.empty() ? "heated-cavity" : cfdCase);
         cfdLoadCase(app.cfd, it == names.end() ? 1 : static_cast<int>(it - names.begin()), -1);
+    }
+    if (arg(argc, argv, "--cfd-job", "") == "on") {
+        if (!app.cfd.solver) cfdLoadCase(app.cfd, 4, -1);
+        app.cfd.jobSpeed = std::stof(arg(argc, argv, "--job-speed", "5"));
+        cfdStartJob(app.cfd);
     }
     app.s.scene = sceneArg == "cfd"      ? SceneId::Cfd
                 : sceneArg == "chip"     ? SceneId::Chip

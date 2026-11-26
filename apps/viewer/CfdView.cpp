@@ -27,7 +27,7 @@ Side& sideRef(Params& p, int k) { Side* s[4] = {&p.left, &p.right, &p.bottom, &p
 bool isRaCase(const std::string& n) { return n == "heated-cavity" || n == "rayleigh-benard"; }
 
 void spawn(CfdApp& c, CfdApp::Particle& p, bool atInlet) {
-    const Params& q = c.solver->params();
+    const Params& q = c.active()->params();
     std::uniform_real_distribution<double> ux(0.0, 1.0);
     if (atInlet && q.left.u > 0 && q.left.velocity == VelocityBC::Wall) p.x = 0.01 * q.lx * ux(rng);
     else p.x = q.lx * ux(rng);
@@ -53,20 +53,62 @@ void cfdLoadCase(CfdApp& c, int index, double value) {
     if (c.kase.name == "microchannel") c.colorMode = 0;
 }
 
+bool cfdStartJob(CfdApp& c) {
+    if (!FileExists(c.tracePath.c_str())) {
+        c.jobMessage = "no trace: run ml/train_mnist.py first";
+        return false;
+    }
+    if (c.kase.name != "microchannel") cfdLoadCase(c, 4, -1);
+    JobChannelParams jp;
+    jp.gpu = c.gpu;
+    jp.coolant = c.coolant;
+    jp.cellsAcross = 8;
+    jp.velocity = c.kase.velocityScale;
+    c.job = std::make_unique<JobChannel>(jp, std::make_shared<mf::JobTraceWorkload>(c.tracePath, 2.0, 1.0, false));
+    c.jobState = 1;
+    c.hist.clear();
+    c.lastKE = 0.0;
+    c.jobMessage = "solving the flow field (Navier-Stokes)...";
+    c.colorMode = 0;
+    return true;
+}
+
 void cfdUpdate(CfdApp& c) {
-    if (!c.solver || c.paused) { c.simPerFrame = 0.0; return; }
+    NavierStokes2D* sv = c.active();
+    if (!sv || c.paused) { c.simPerFrame = 0.0; return; }
     const auto t0 = std::chrono::steady_clock::now();
+    auto elapsedMs = [&] { return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count(); };
     double sim = 0.0;
-    do {
-        sim += c.solver->step();
-    } while (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() < c.budgetMs);
+    if (c.job && c.jobState == 1) {
+        // Solve the velocity field with the full Navier-Stokes equations until it stops changing.
+        do { sim += sv->step(); } while (elapsedMs() < c.budgetMs);
+        const double ke = sv->kineticEnergy();
+        const double flowThrough = sv->params().lx / std::max(sv->params().left.u, 1e-9);
+        if (sv->time() > 3.0 * flowThrough && std::abs(ke - c.lastKE) < 1e-5 * ke) {
+            c.jobState = 2;
+            c.jobMessage = "flow field solved; following the CNN job";
+        }
+        c.lastKE = ke;
+    } else if (c.job && c.jobState == 2) {
+        // Follow the recorded job: implicit energy steps on the frozen flow.
+        const int n = std::clamp(static_cast<int>(std::ceil(c.jobSpeed * GetFrameTime() / 0.05)), 1, 200);
+        for (int k = 0; k < n && elapsedMs() < 3 * c.budgetMs; ++k) {
+            c.last = c.job->step();
+            c.hist.push_back(c.last);
+            sim += 0.05;
+        }
+        if (c.job->time() > c.job->duration() + 30.0) { c.jobState = 3; c.jobMessage = "job finished"; }
+    } else if (!c.job) {
+        do { sim += sv->step(); } while (elapsedMs() < c.budgetMs);
+    }
     c.simPerFrame = sim;
+    if (c.job && c.jobState >= 2) return; // frozen flow: tracers would just repeat the steady pattern
     // Tracers ride the computed velocity field (midpoint rule); show the flow pattern.
-    const Params& q = c.solver->params();
+    const Params& q = sv->params();
     for (auto& p : c.particles) {
         double u1, v1, u2, v2;
-        c.solver->velocityAt(p.x, p.y, u1, v1);
-        c.solver->velocityAt(p.x + 0.5 * sim * u1, p.y + 0.5 * sim * v1, u2, v2);
+        sv->velocityAt(p.x, p.y, u1, v1);
+        sv->velocityAt(p.x + 0.5 * sim * u1, p.y + 0.5 * sim * v1, u2, v2);
         p.x += sim * u2;
         p.y += sim * v2;
         p.age += 1.0f;
@@ -75,11 +117,14 @@ void cfdUpdate(CfdApp& c) {
 }
 
 void drawCfdField(CfdApp& c, const ViewerState& s, Rectangle a) {
-    if (!c.solver) return;
-    NavierStokes2D& sv = *c.solver;
+    if (!c.active()) return;
+    NavierStokes2D& sv = *c.active();
     const Params& q = sv.params();
     drawText(s, "2-D Navier-Stokes + energy (Boussinesq)", a.x, a.y, 18, kInk);
-    drawText(s, c.kase.description, a.x, a.y + 22, 14, kInk);
+    drawText(s, c.job ? std::string("CNN job: GPU power -> heat flux on both silicon rib walls (hotspot-shaped); water in at 35 C, ") +
+                            (c.jobState == 1 ? "solving the flow field..." : "following the recorded job")
+                      : c.kase.description,
+             a.x, a.y + 22, 14, kInk);
     drawText(s, c.kase.reynoldsNote + f1("   grid %.0f", sv.nx()) + f1(" x %.0f", sv.ny()) + "   staggered MAC grid, projection method",
              a.x, a.y + 40, 13, kDim);
     // Fit the domain, stretching thin channels vertically for visibility.
@@ -94,6 +139,7 @@ void drawCfdField(CfdApp& c, const ViewerState& s, Rectangle a) {
 
     // colour range
     double lo = c.kase.tCold, hi = c.kase.tHot;
+    if (c.job) { lo = 35.0; hi = 90.0; }
     const int nx = sv.nx(), ny = sv.ny();
     std::vector<double> val(static_cast<size_t>(nx) * ny);
     for (int i = 1; i <= nx; ++i)
@@ -202,7 +248,7 @@ float drawCfdPanel(CfdApp& c, ViewerState& s, float x, float y, float w) {
         y += 27;
         return *v != before;
     };
-    Params& q = c.solver->params();
+    Params& q = c.active()->params();
     heading("Case");
     int idx = c.caseIndex;
     GuiComboBox({x, y, w, 26}, kCaseLabels, &idx);
@@ -222,6 +268,29 @@ float drawCfdPanel(CfdApp& c, ViewerState& s, float x, float y, float w) {
     if (GuiButton({x + (w + 8) / 2, y, (w - 8) / 2, 26}, "Reset field")) c.solver->reset();
     y += 34;
 
+    if (nm == "microchannel") {
+        heading("CNN workload on the walls");
+        if (!c.job) {
+            if (GuiButton({x, y, w, 26}, "Drive walls with the CNN job")) cfdStartJob(c);
+        } else if (GuiButton({x, y, w, 26}, "Stop CNN job (back to fixed walls)")) {
+            c.job.reset();
+            c.jobState = 0;
+            c.jobMessage.clear();
+        }
+        y += 32;
+        if (c.job) {
+            drawText(s, "Job speed", x, y + 3, 15, kInk);
+            GuiSlider({x + 100, y, w - 100 - 70, 20}, nullptr, nullptr, &c.jobSpeed, 0.5f, 30.0f);
+            drawText(s, f1("%.1fx", c.jobSpeed), x + w - 64, y + 3, 14, kDim);
+            y += 27;
+        }
+        if (!c.jobMessage.empty()) { drawText(s, c.jobMessage, x, y, 13, Color{120, 230, 150, 255}); y += 20; }
+        if (c.job) {
+            drawText(s, "GPU power -> heat flux on the rib walls,", x, y, 13, kDim); y += 16;
+            drawText(s, "shaped by the hotspot map; energy implicit.", x, y, 13, kDim); y += 20;
+            return y;
+        }
+    }
     heading("Boundary conditions (live)");
     GuiToggleGroup({x, y, (w - 12) / 4, 24}, "Left;Right;Bottom;Top", &c.wall);
     y += 32;
@@ -281,7 +350,7 @@ void drawCfdReadouts(CfdApp& c, const ViewerState& s, Rectangle a) {
         drawText(s, v, x + w - tw, y, 15, col);
         y += 20;
     };
-    NavierStokes2D& sv = *c.solver;
+    NavierStokes2D& sv = *c.active();
     const Params& q = sv.params();
     drawText(s, "2-D Navier-Stokes solver", x, y, 17, kInk);
     y += 26;
@@ -307,6 +376,45 @@ void drawCfdReadouts(CfdApp& c, const ViewerState& s, Rectangle a) {
         if (sd.thermal == ThermalBC::FixedTemperature && c.kase.name != "microchannel") v += f1("  (Nu %.3f)", qf * (k < 2 ? q.lx : q.ly) / (q.k * dT));
         (void)L;
         row(nms[k], v);
+    }
+    if (c.job && c.jobState >= 2) {
+        y += 8;
+        drawText(s, "CNN job on the walls", x, y, 16, kHead);
+        y += 24;
+        const auto& L = c.last;
+        row("job time / phase", f1("%.1f s  ", L.t) + L.phase);
+        row("activity u / GPU power", f1("%.2f  /  ", L.u) + f1("%.0f W", L.powerW));
+        row("wall heat flux (mean)", f1("%.3g W/m\xC2\xB2", L.qMean));
+        row("rib wall max (Navier-Stokes)", f1("%.2f \xC2\xB0""C", L.wallMaxC), heatColor(L.wallMaxC, kSiliconLo, kSiliconHi));
+        row("silicon peak (chip model)", f1("%.2f \xC2\xB0""C", L.chipPeakC), heatColor(L.chipPeakC, kSiliconLo, kSiliconHi));
+        row("water outlet (NS / chip)", f1("%.2f", L.outletC) + f1(" / %.2f \xC2\xB0""C", L.chipOutletC));
+        row("heat in / out (one channel)", f1("%.2f", L.heatInW) + f1(" / %.2f W", L.heatOutW));
+        // mini chart: NS wall max (red) vs chip-model silicon peak (orange) vs activity (green)
+        const Rectangle pr{x, y + 6, w, 120};
+        DrawRectangleLinesEx(pr, 1, Color{50, 56, 66, 255});
+        if (c.hist.size() > 1) {
+            const double t1 = c.hist.back().t, t0 = std::max(0.0, t1 - 120.0);
+            auto P = [&](double t, double v, double lo, double hi) {
+                return Vector2{pr.x + pr.width * static_cast<float>((t - t0) / std::max(t1 - t0, 1e-9)),
+                               pr.y + pr.height * static_cast<float>(1 - std::clamp((v - lo) / (hi - lo), 0.0, 1.0))};
+            };
+            Vector2 a1{}, a2{}, a3{};
+            bool first = true;
+            const size_t stride = std::max<size_t>(1, c.hist.size() / 600);
+            for (size_t k = 0; k < c.hist.size(); k += stride) {
+                const auto& h = c.hist[k];
+                if (h.t < t0) continue;
+                const Vector2 b1 = P(h.t, h.wallMaxC, 30, 95), b2 = P(h.t, h.chipPeakC, 30, 95), b3 = P(h.t, h.u, 0, 1);
+                if (!first) {
+                    DrawLineEx(a3, b3, 1.0f, Color{110, 220, 140, 160});
+                    DrawLineEx(a2, b2, 1.6f, Color{255, 170, 60, 255});
+                    DrawLineEx(a1, b1, 1.6f, Color{255, 90, 80, 255});
+                }
+                a1 = b1; a2 = b2; a3 = b3; first = false;
+            }
+        }
+        drawText(s, "NS wall max (red), chip silicon (orange), u (green)", pr.x + 4, pr.y + pr.height + 4, 12, kDim);
+        y += 150;
     }
     y += 8;
     drawText(s, "Equations solved", x, y, 16, kHead);

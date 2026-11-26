@@ -71,6 +71,33 @@ How to change them:
 
 Every run writes `fields.csv` (x, y, u, v, p, T) and `streamfunction.csv`. The microchannel and channel cases also write `along_flow.csv`: pressure, bulk temperature and local Nu along the flow.
 
+## The CNN workload on the Navier–Stokes solver
+
+The recorded PyTorch job ([ml_workload.md](ml_workload.md)) also drives this solver, through `mfsim cfd-job` and the viewer's CFD scene ("Drive walls with the CNN job"):
+
+1. **Activity → power.** Device activity u(t) sets the GPU power, P = 60 + u (300 − 60) W.
+2. **Power → wall heat flux.** One channel's share, P / 50, enters the water through the two silicon rib walls of the microchannel slice: q = P / (50 × 2 × L × depth), about 3 × 10⁵ W/m² at full load. It is shaped along the flow by the GPU's power map for the channel that crosses the hotspot.
+3. **Flow.** The velocity field is solved once with the full Navier–Stokes equations. Buoyancy is negligible in this forced flow, so the flow does not depend on temperature.
+4. **Energy.** The energy equation is then marched with an implicit (backward-Euler, upwind) step on that flow, 0.05 s per step through the whole job. It is unconditionally stable, so the 173 s job takes about 4 s instead of millions of explicit steps.
+5. **Comparison.** The reduced chip model follows the same trace with the same coolant and flow.
+
+| Peak during training (8-epoch job, 0.5 L/min) | Water | PG25 |
+|---|---|---|
+| Hottest rib wall, Navier–Stokes | 83.1 °C | **92.8 °C** |
+| Hottest silicon, chip model | 81.7 °C | 88.9 °C |
+| Training-phase mean wall temperature (NS) | 63.0 °C | 68.7 °C |
+| Energy into / out of the channel over the job | 948.96 / 948.96 J | 948.96 / 948.96 J |
+
+The two independent models agree within a few kelvin, and both put PG25 above the 85 °C limit at this flow.
+
+```bash
+./build/mfsim cfd-job --config configs/plant_baseline.json --coolants water,PG25 --snapshot-at 65
+```
+
+```bash
+./build/mfsim_viewer --scene cfd --cfd-job on --job-speed 3
+```
+
 ## Limits
 
 - **2-D and laminar.** The real channel is 3-D: the slice shows the gap between two ribs and leaves out the floor and the cover. The fully developed duct solve covers the 3-D cross-section, but not entrance effects together with it.
