@@ -3,7 +3,7 @@
 //   mfsim_viewer [--config configs/rack_baseline.json] [--scene rack|server|chip] [--server 1-8] [--chip 0-2]
 //                [--plant on|off] [--outdoor C] [--loads 1,1,...] [--coolant PG25]
 //                [--job live|replay] [--job-servers 2|4|8] [--live-trace F] [--replay-trace F]
-//                [--speed X] [--chart-window 0|1|2] [--scene rack|server|chip|charts]
+//                [--speed X] [--chart-window 0|1|2] [--scene rack|server|chip|charts|cfd] [--cfd-case NAME]
 //                [--screenshot out.png --frames 90]   (render, save a screenshot, exit)
 #include "Scenes.hpp"
 #include "Charts.hpp"
@@ -17,6 +17,7 @@
 
 extern "C" void ViewerLoadDarkStyle(void);
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -112,7 +113,14 @@ int main(int argc, char** argv) {
     app.s.chartWindow = std::clamp(std::stoi(arg(argc, argv, "--chart-window", "1")), 0, 2);
     app.s.server = std::clamp(std::stoi(arg(argc, argv, "--server", "8")) - 1, 0, rack.serverCount() - 1);
     app.s.branch = std::clamp(std::stoi(arg(argc, argv, "--chip", "0")), 0, 2);
-    app.s.scene = sceneArg == "chip"     ? SceneId::Chip
+    const std::string cfdCase = arg(argc, argv, "--cfd-case", "");
+    if (!cfdCase.empty() || sceneArg == "cfd") {
+        const auto names = mf::cfd::caseNames();
+        const auto it = std::find(names.begin(), names.end(), cfdCase.empty() ? "heated-cavity" : cfdCase);
+        cfdLoadCase(app.cfd, it == names.end() ? 1 : static_cast<int>(it - names.begin()), -1);
+    }
+    app.s.scene = sceneArg == "cfd"      ? SceneId::Cfd
+                : sceneArg == "chip"     ? SceneId::Chip
                 : sceneArg == "server"   ? SceneId::Server
                 : sceneArg == "charts"   ? SceneId::Charts
                                          : SceneId::Rack;
@@ -144,7 +152,8 @@ int main(int argc, char** argv) {
         const float sw = static_cast<float>(GetScreenWidth()), sh = static_cast<float>(GetScreenHeight());
         const Vector2 mouse = GetMousePosition();
         const Rectangle readoutArea{sw - 380, 12, 368, 790};
-        const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea) || app.s.scene == SceneId::Charts;
+        const bool overUi = mouse.x < panelW || CheckCollisionPointRec(mouse, readoutArea) || app.s.scene == SceneId::Charts ||
+                            app.s.scene == SceneId::Cfd;
 
         // ---- camera input ----
         if (!overUi) {
@@ -181,11 +190,17 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_TWO)) { app.s.scene = SceneId::Server; frameScene(app.s); }
         if (IsKeyPressed(KEY_THREE)) { app.s.scene = SceneId::Chip; frameScene(app.s); }
         if (IsKeyPressed(KEY_FOUR)) app.s.scene = SceneId::Charts;
+        if (IsKeyPressed(KEY_FIVE)) {
+            app.s.scene = SceneId::Cfd;
+            if (!app.cfd.solver) cfdLoadCase(app.cfd, 1, -1);
+        }
         if (app.requestFrame) { frameScene(app.s); app.requestFrame = false; }
         if (app.requestSteady) { dc.solveSteady(); app.requestSteady = false; }
 
         // ---- physics: fixed implicit sub-steps decoupled from the frame rate ----
-        if (!app.s.paused && GetFrameTime() > 0.0f) {
+        const bool cfdScene = app.s.scene == SceneId::Cfd;
+        if (cfdScene) cfdUpdate(app.cfd);
+        else if (!app.s.paused && GetFrameTime() > 0.0f) {
             const double simDt = std::min<double>(GetFrameTime(), 0.05) * app.s.simSpeed;
             const int n = std::clamp(static_cast<int>(std::ceil(simDt / 0.02)), 1, 40);
             for (int i = 0; i < n; ++i) dc.step(simDt / n);
@@ -204,7 +219,9 @@ int main(int argc, char** argv) {
         const Camera3D cam = cameraFor(app.s);
         app.s.labelList.clear();
         const bool charts = app.s.scene == SceneId::Charts;
-        if (!charts) {
+        if (cfdScene) {
+            drawCfdField(app.cfd, app.s, {panelW + 16, 14, sw - panelW - 16 - 396, sh - 26});
+        } else if (!charts) {
             BeginMode3D(cam);
             switch (app.s.scene) {
             case SceneId::Rack:
@@ -225,9 +242,13 @@ int main(int argc, char** argv) {
             drawDashboard(app.s, dc, {panelW + 16, 14, sw - panelW - 16 - 396, sh - 26});
         }
         drawControlPanel(app, {0, 0, panelW, sh});
-        drawReadouts(app, readoutArea);
-        if (!charts) drawHistory(app.s, {panelW + 20, sh - 160, sw - panelW - 420, 146});
-        drawLegend(app.s, {sw - 360, sh - 130, 330, 110});
+        if (cfdScene) {
+            drawCfdReadouts(app.cfd, app.s, readoutArea);
+        } else {
+            drawReadouts(app, readoutArea);
+            if (!charts) drawHistory(app.s, {panelW + 20, sh - 160, sw - panelW - 420, 146});
+            drawLegend(app.s, {sw - 360, sh - 130, 330, 110});
+        }
         EndDrawing();
 
         if (!shot.empty() && ++frame >= shotFrames) {

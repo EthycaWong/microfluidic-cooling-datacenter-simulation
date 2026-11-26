@@ -10,10 +10,15 @@ A physics-based C++ simulation, with a live 3D viewer, of a liquid-cooled 42U se
 |---|---|---|
 | ![Server](docs/screenshots/server.png) | ![Chip](docs/screenshots/chip.png) | ![Charts](docs/screenshots/charts.png) |
 
+| Navier–Stokes: heated cavity (hot / cold walls, u = v = 0) | Rayleigh–Bénard convection | Microchannel slice (hot ribs, cold inflow) |
+|---|---|---|
+| ![Heated cavity](docs/screenshots/cfd_heated-cavity.png) | ![Rayleigh-Benard](docs/screenshots/cfd_rayleigh-benard.png) | ![Microchannel](docs/screenshots/cfd_microchannel.png) |
+
 **Documents:**
 - **[Results report](docs/report/REPORT.md):** 11 figures with written analysis, regenerated from the simulation.
 - **[Parameters and assumptions](docs/parameters.md):** every input, its source, and the hand calculations.
 - **[CNN workload](docs/ml_workload.md):** the PyTorch job and its co-simulation.
+- **[Navier–Stokes and energy equations](docs/cfd.md):** what is solved where, the 2-D solver, boundary conditions and benchmarks.
 - **Schematics:** [chip](docs/schematics/chip.svg), [server](docs/schematics/server.svg), [rack](docs/schematics/rack.svg), [cooling plant](docs/schematics/plant.svg).
 
 ---
@@ -35,6 +40,7 @@ All numbers come from the simulation; the [results report](docs/report/REPORT.md
 
 | Question | Answer |
 |---|---|
+| Are the Navier–Stokes and energy equations solved? | **Both levels.** The rack model conserves energy exactly and uses laminar duct correlations, which are themselves Navier–Stokes solutions. A separate 2-D Navier–Stokes + energy solver re-derives them for our channel (f·Re 16.36 vs 16.38; Nu 4.93 vs 4.89) and matches the Ghia (lid cavity) and de Vahl Davis (heated cavity) benchmarks. |
 | Does the chip model match hand calculations? | Yes. Re 658 (hand: ≈ 660), channel Δp 13.5 kPa (12–15), GPU outlet 43.67 °C (43.7), rack mixed return 42.70 °C (42.7). The heat balance closes to about 1e-8 W. |
 | How hot does a 300 W microchannel GPU get? | 65.9 °C with uniform heating; **81.9 °C** with the assumed hotspot (50 % of the power in 25 % of the die). |
 | Does viscosity raise chip temperature? | **Not at a given flow.** Holding 85 °C needs 10.1 L/min at 1× and at 4× viscosity, because Re·Pr contains no μ. |
@@ -164,7 +170,29 @@ supply ─ QD ─┬─ hose ─ GPU 1 microchannels ─ valve ─┬─ QD ─ 
 - **Partial PUE** = (IT + server fans + cooling) / (IT + server fans).
 - **Water:** evaporated water (always 0 for this loop), and what an evaporative tower would evaporate for the same heat (2.43 MJ/kg).
 
-### 2.9 Numerical methods
+### 2.9 First-principles CFD: Navier–Stokes + energy
+
+`src/core/cfd` solves the full 2-D incompressible Navier–Stokes and energy equations with Boussinesq buoyancy:
+
+```
+∂u/∂t + (u·∇)u = −∇p/ρ + ν∇²u − β(T − T_ref)g,    ∇·u = 0,    ∂T/∂t + u·∇T = α∇²T
+```
+
+- **Method:** staggered (MAC) finite volumes and a Chorin projection, with the pressure Poisson equation solved by preconditioned conjugate gradients. The flow is divergence-free to about 1e-6 s⁻¹, with an adaptive time step.
+- **Boundary-driven:** every wall prescribes both velocity components (u, v). They default to 0 (no-slip) and can be changed to make a moving wall or an inflow, or the wall can be set to outflow. Every wall is also held at a fixed hot or cold temperature, given a fixed heat flux, or insulated. All of these can change while the flow runs.
+- **Cases:** lid-driven cavity, heated cavity, Rayleigh–Bénard, mixed convection, channel flow, a microchannel slice with real water properties, and a fully developed solve of the 200 × 500 µm duct.
+- **Benchmarks:**
+
+  | Case | This solver | Published |
+  |---|---|---|
+  | Lid-driven cavity, Re = 100 | centreline velocity within 0.005 | Ghia, Ghia & Shin (1982) |
+  | Heated cavity, Ra = 10⁴ / 10⁵ | Nu 2.252 / 4.575 | 2.243 / 4.519 (de Vahl Davis 1983) |
+  | Channel flow | pressure gradient −0.3 % | analytic |
+  | Rayleigh–Bénard | Nu = 1 below Ra ≈ 1708, convection above | theory |
+
+See [docs/cfd.md](docs/cfd.md).
+
+### 2.10 Numerical methods
 
 - **Chip:** implicit backward Euler, unconditionally stable. This is needed because the silicon time constant is about 30 ms and coolant transit about 1 ms. Each step uses a Gauss–Seidel solve; temperature-dependent coefficients are lagged one step.
 - **Steady states:** pseudo-transient continuation for chips, fixed-point coupling of the hydraulic and thermal solutions, and bisection where a target must be met (pump speed for a peak limit, fan speed for a setpoint).
@@ -174,7 +202,7 @@ supply ─ QD ─┬─ hose ─ GPU 1 microchannels ─ valve ─┬─ QD ─ 
 
 ## 3. Verification
 
-`ctest` runs 40 test cases (682 assertions) in about a minute:
+`ctest` runs 46 test cases (709 assertions) in about a minute:
 
 | Area | What is checked |
 |---|---|
@@ -185,6 +213,7 @@ supply ─ QD ─┬─ hose ─ GPU 1 microchannels ─ valve ─┬─ QD ─ 
 | Server / rack | Valve auto-balance (also with PG25); unbalanced CPU flow; 42.7 °C mixed return; reverse-return evenness; pump operating point on its curve; PI hold; feedforward overshoot < 86 °C. |
 | Plant | ε-NTU limits; setpoint held on mild days; chiller and economizer on hot days; minimum fans on cold days; transient recovery after a load step; viscosity lowering CDU UA; freeze flag. |
 | ML trace | Replay timing, offset and scale; idle before and after the job; live file growth. |
+| Navier–Stokes | Duct f·Re and Nu vs Shah & London; Ghia lid cavity; de Vahl Davis heated cavity with heat in = heat out; Rayleigh–Bénard onset; channel pressure gradient, parabolic profile and mass conservation; walls at rest give no flow; reversing the lid mirrors the flow. |
 
 ---
 
@@ -218,6 +247,7 @@ ctest --test-dir build --output-on-failure
 | Server (2) | Cut-away 4U server: GPU and CPU heat maps, hoses coloured by temperature, fans |
 | Chip (3) | Exploded die: silicon heat map, 50 microchannels coloured by coolant temperature, hotspot marker |
 | Charts (4) | Live dashboard over 1 / 10 / 60 min: temperatures, IT power, stacked cooling electricity, hydraulics, per-server bars, chip heat map with along-flow profiles, energy and partial PUE |
+| CFD (5) | 2-D Navier–Stokes + energy solver running live: temperature, speed, pressure or vorticity field, velocity arrows, tracer particles. Pick a case, then set each wall's u, v, hot / cold / insulated and outflow while it runs. |
 
 **Controls:** left-drag orbits, right-drag pans, the wheel zooms, Space pauses, and a double-click opens a server. The left panel sets:
 - the workload (sliders, square waves, live or replayed ML job, 2/4/8 job servers);
@@ -225,7 +255,7 @@ ctest --test-dir build --output-on-failure
 - the plant (on/off, setpoint, outdoor temperature, facility fluid, chiller);
 - the pump mode and target, and the manifold layout and valves.
 
-Useful flags: `--scene charts`, `--speed 10`, `--coolant PG25`, `--outdoor 32`, `--job replay`, and `--screenshot out.png --frames 300`.
+Useful flags: `--scene cfd --cfd-case rayleigh-benard`, `--scene charts`, `--speed 10`, `--coolant PG25`, `--outdoor 32`, `--job replay`, and `--screenshot out.png --frames 300`.
 
 ### Experiments (command line)
 
@@ -240,6 +270,7 @@ Useful flags: `--scene charts`, `--speed 10`, `--coolant PG25`, `--outdoor 32`, 
 | `mfsim climate-sweep --temps 0,10,20,30,40` | Cooling electricity and partial PUE vs outdoor temperature |
 | `mfsim uneven-load` | Half the rack busy, direct vs reverse return |
 | `mfsim hydraulics` | Loop pressure budget, pump and system curves |
+| `mfsim cfd --case heated-cavity --value 1e5` | 2-D Navier–Stokes + energy case. Wall overrides: `--left-u`, `--top-T`, `--bottom-insulated`, `--right-outflow`, … Also `--case duct` for the fully developed check |
 | `mfsim cosim --trace results/ml/activity_trace.csv` | Replay a recorded ML job on the rack and plant |
 
 Common options: `--config F`, `--level`, `--coolant`, `--facility-coolant`, `--viscosity`, `--outdoor`, `--chiller off`, `--pump-mode flow|speed|peak`, `--target-peak C`. Configs live in `configs/`; JSON keys carry units, and `//` comments are allowed.
@@ -280,6 +311,7 @@ src/core/
   system/       server, rack (manifolds, pump control), cooling plant (CDU, dry cooler, chiller), data center
   workload/     constant / step / square / trace / ML job trace (replay + live)
   config/       JSON configs -> parameter structs
+  cfd/          2-D Navier-Stokes + energy (projection, MAC grid), fully developed duct flow, case presets
 apps/mfsim/     experiments command-line tool
 apps/viewer/    raylib + raygui 3D viewer and live charts dashboard
 ml/             PyTorch CNN, page scanner, activity monitor, job report, run scripts
@@ -298,6 +330,7 @@ docs/           report, parameters, ML workload, schematics, screenshots
   - the cold-plate, quick-disconnect, CDU, filter, dry-cooler, chiller and pump curves;
   - the loop volumes.
 - **Simplifications.**
+  - The rack model uses Navier–Stokes only through verified duct correlations. The CFD solver is 2-D, laminar and constant-property (Boussinesq); it checks the reduced model rather than replacing it.
   - The chip is a 2-D grid with lumped ribs.
   - Microchannel heat transfer uses a thermal-entrance approximation.
   - Flow is equal across the 50 channels.

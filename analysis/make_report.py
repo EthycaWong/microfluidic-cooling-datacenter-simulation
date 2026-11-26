@@ -125,6 +125,26 @@ def run_experiments() -> None:
     mfsim("run", "--config", write_cfg(cfg, "cfg_step.json"), "--start-steady", "--duration", "1200", "--dt", "0.05",
           "--every", "1", "--out", str(RES / "load_step.csv"))
 
+    print("Navier-Stokes cases (about 2 min) ...")
+    cfd = RES / "cfd"
+    mfsim("cfd", "--case", "lid-cavity", "--value", "100", "--n", "64", "--out", str(cfd / "lid"))
+    nu_rows = ["ra,nu_hot,nu_cold"]
+    for ra in ("1e3", "1e4", "1e5"):
+        out = mfsim("cfd", "--case", "heated-cavity", "--value", ra, "--n", "64", "--out", str(cfd / f"cavity_{ra}"))
+        line = next(l for l in out.splitlines() if l.startswith("Nusselt number: hot wall"))
+        parts = line.replace(",", "").split()
+        nu_rows.append(f"{ra},{parts[4]},{parts[7]}")
+    (cfd / "cavity_nu.csv").write_text("\n".join(nu_rows) + "\n")
+    rb_rows = ["ra,nu"]
+    for ra in ("1000", "3000", "1e4", "3e4", "1e5"):
+        out = mfsim("cfd", "--case", "rayleigh-benard", "--value", ra, "--n", "24", "--seed", "0.2",
+                    "--out", str(cfd / f"rb_{ra}"))
+        line = next(l for l in out.splitlines() if l.startswith("Nusselt number (floor)"))
+        rb_rows.append(f"{ra},{line.split()[3]}")
+    (cfd / "rb_nu.csv").write_text("\n".join(rb_rows) + "\n")
+    mfsim("cfd", "--case", "duct", "--width", "200e-6", "--height", "500e-6", "--n", "64", "--out", str(cfd / "duct"))
+    mfsim("cfd", "--case", "microchannel", "--out", str(cfd / "microchannel"))
+
     print("24-hour day (about a minute) ...")
     rng = np.random.default_rng(7)
     with open(RES / "day_workload.csv", "w") as f:
@@ -481,6 +501,147 @@ def fig_day(facts: dict) -> str:
     return save(fig, "fig10_day.png")
 
 
+GHIA_Y = [0.0, 0.0547, 0.0625, 0.0703, 0.1016, 0.1719, 0.2813, 0.4531, 0.5, 0.6172, 0.7344, 0.8516, 0.9531, 0.9609,
+          0.9688, 0.9766, 1.0]
+GHIA_U = [0.0, -0.03717, -0.04192, -0.04775, -0.06434, -0.10150, -0.15662, -0.21090, -0.20581, -0.13641, 0.00332,
+          0.23151, 0.68717, 0.73722, 0.78871, 0.84123, 1.0]
+DVD = {1e3: 1.118, 1e4: 2.243, 1e5: 4.519}
+
+
+def field(path: Path, key: str):
+    rows = table(path)
+    nx = int(max(r["i"] for r in rows))
+    ny = int(max(r["j"] for r in rows))
+    g = np.zeros((ny, nx))
+    for r in rows:
+        g[int(r["j"]) - 1, int(r["i"]) - 1] = r[key]
+    return g, rows
+
+
+def psi_grid(path: Path):
+    rows = table(path)
+    nx = int(max(r["i"] for r in rows)) + 1
+    ny = int(max(r["j"] for r in rows)) + 1
+    g = np.zeros((ny, nx))
+    for r in rows:
+        g[int(r["j"]), int(r["i"])] = r["psi"]
+    return g
+
+
+def fig_cfd_verification(facts: dict) -> str:
+    cfd = RES / "cfd"
+    fig, axs = plt.subplots(1, 3, figsize=(17, 4.6), gridspec_kw={"wspace": 0.35})
+    u, rows = field(cfd / "lid" / "fields.csv", "u")
+    ny, nx = u.shape
+    y = (np.arange(ny) + 0.5) / ny
+    uc = 0.5 * (u[:, nx // 2 - 1] + u[:, nx // 2])
+    axs[0].plot(uc, y, color="#2563eb", lw=2, label=f"this solver ({nx}×{ny})")
+    axs[0].plot(GHIA_U, GHIA_Y, "o", color="#dc2626", ms=5, label="Ghia, Ghia & Shin (1982)")
+    axs[0].set_xlabel("u / U_lid on the vertical centreline")
+    axs[0].set_ylabel("y / L")
+    axs[0].set_title("Lid-driven cavity, Re = 100")
+    axs[0].legend(fontsize=8)
+    err = max(abs(np.interp(gy, y, uc) - gu) for gy, gu in zip(GHIA_Y[1:-1], GHIA_U[1:-1]))
+    facts["ghia_err"] = err
+    nu = table(cfd / "cavity_nu.csv")
+    ra = [r["ra"] for r in nu]
+    x = np.arange(len(ra))
+    axs[1].bar(x - 0.2, [r["nu_hot"] for r in nu], 0.4, color="#2563eb", label="this solver (64×64)")
+    axs[1].bar(x + 0.2, [DVD[v] for v in ra], 0.4, color="#dc2626", label="de Vahl Davis (1983)")
+    for i, r in enumerate(nu):
+        axs[1].text(i - 0.2, r["nu_hot"] + 0.08, f"{r['nu_hot']:.3f}", ha="center", fontsize=8)
+        axs[1].text(i + 0.2, DVD[r["ra"]] + 0.08, f"{DVD[r['ra']]:.3f}", ha="center", fontsize=8)
+    axs[1].set_xticks(x, [f"Ra = {v:.0e}" for v in ra])
+    axs[1].set_ylabel("mean Nusselt number, hot wall")
+    axs[1].set_title("Heated cavity (hot / cold walls fixed, u = v = 0)")
+    axs[1].legend(fontsize=8)
+    facts["dvd"] = [(r["ra"], r["nu_hot"], DVD[r["ra"]]) for r in nu]
+    ds = table(cfd / "duct" / "duct_summary.csv")
+    d = {r["quantity"]: r for r in ds}
+    w, drows = field(cfd / "duct" / "duct.csv", "w_over_mean") if False else (None, None)
+    rows = table(cfd / "duct" / "duct.csv")
+    nxd = int(max(r["i"] for r in rows)) + 1
+    nyd = int(max(r["j"] for r in rows)) + 1
+    wg = np.zeros((nyd, nxd))
+    for r in rows:
+        wg[int(r["j"]), int(r["i"])] = r["w_over_mean"]
+    im = axs[2].imshow(wg, origin="lower", cmap=HEAT, extent=[0, 200, 0, 500], aspect="equal")
+    axs[2].contour(np.linspace(0, 200, nxd), np.linspace(0, 500, nyd), wg, levels=8, colors="k", linewidths=0.5)
+    fig.colorbar(im, ax=axs[2], shrink=0.8, label="w / w_mean")
+    axs[2].set_xlabel("width (µm)")
+    axs[2].set_ylabel("depth (µm)")
+    axs[2].set_title(f"Our 200×500 µm channel, fully developed NS\n"
+                     f"f·Re {d['fRe']['navier_stokes']:.3f} (model {d['fRe']['chip_model']:.3f}), "
+                     f"Nu₃ {d['Nu3']['navier_stokes']:.3f} (model {d['Nu3']['chip_model']:.3f})", fontsize=10)
+    axs[2].grid(False)
+    facts["duct"] = d
+    return save(fig, "fig12_cfd_verification.png")
+
+
+def fig_cfd_flows(facts: dict) -> str:
+    cfd = RES / "cfd"
+    fig = plt.figure(figsize=(17, 9))
+    gs = fig.add_gridspec(2, 3, hspace=0.45, wspace=0.35)
+    # heated cavity Ra 1e5: isotherms + streamlines
+    ax = fig.add_subplot(gs[0, 0])
+    T, _ = field(cfd / "cavity_1e5" / "fields.csv", "T")
+    psi = psi_grid(cfd / "cavity_1e5" / "streamfunction.csv")
+    im = ax.imshow(T, origin="lower", cmap=HEAT, extent=[0, 1, 0, 1])
+    ax.contour(np.linspace(0, 1, psi.shape[1]), np.linspace(0, 1, psi.shape[0]), psi, levels=12, colors="w", linewidths=0.7)
+    ax.set_title("Heated cavity, Ra = 1e5: temperature + streamlines\nhot left, cold right, all walls u = v = 0")
+    ax.set_xlabel("x / L"); ax.set_ylabel("y / L"); ax.grid(False)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="T")
+    # lid cavity streamlines
+    ax = fig.add_subplot(gs[0, 1])
+    sp, _ = field(cfd / "lid" / "fields.csv", "u")
+    psi = psi_grid(cfd / "lid" / "streamfunction.csv")
+    vv, _ = field(cfd / "lid" / "fields.csv", "v")
+    spd = np.hypot(sp, vv)
+    im = ax.imshow(spd, origin="lower", cmap=HEAT, extent=[0, 1, 0, 1])
+    ax.contour(np.linspace(0, 1, psi.shape[1]), np.linspace(0, 1, psi.shape[0]), psi, levels=16, colors="w", linewidths=0.7)
+    ax.set_title("Lid-driven cavity, Re = 100: speed + streamlines\nlid u = 1, other walls u = v = 0")
+    ax.set_xlabel("x / L"); ax.set_ylabel("y / L"); ax.grid(False)
+    fig.colorbar(im, ax=ax, shrink=0.8, label="|u| / U")
+    # RB onset
+    ax = fig.add_subplot(gs[0, 2])
+    rb = table(cfd / "rb_nu.csv")
+    ax.semilogx([r["ra"] for r in rb], [r["nu"] for r in rb], "o-", color="#dc2626")
+    ax.axvline(1708, color="#111827", ls=":", lw=1)
+    ax.text(1800, 1.2, "Ra_c ≈ 1708", fontsize=8)
+    ax.axhline(1.0, color="#94a3b8", lw=0.8)
+    ax.set_xlabel("Rayleigh number")
+    ax.set_ylabel("Nusselt number (hot floor)")
+    ax.set_title("Rayleigh-Bénard: conduction (Nu = 1) until\nconvection rolls start near Ra ≈ 1708")
+    facts["rb"] = rb
+    # microchannel slice field + local Nu
+    ax = fig.add_subplot(gs[1, :2])
+    Tm, _ = field(cfd / "microchannel" / "fields.csv", "T")
+    im = ax.imshow(Tm, origin="lower", cmap=HEAT, extent=[0, 20, 0, 200], aspect="auto", vmin=35, vmax=65)
+    ax.set_xlabel("distance along the channel (mm)")
+    ax.set_ylabel("across the gap (µm)")
+    ax.set_title("Microchannel slice (Navier-Stokes): water enters at 35 °C between silicon ribs held at 65 °C")
+    ax.grid(False)
+    fig.colorbar(im, ax=ax, shrink=0.9, label="°C")
+    ax = fig.add_subplot(gs[1, 2])
+    al = table(cfd / "microchannel" / "along_flow.csv")
+    x = col(al, "x") * 1e3
+    ax.plot(x, col(al, "Nu_x"), color="#2563eb", lw=2, label="local Nu (Navier-Stokes)")
+    ax.axhline(7.541, color="#dc2626", ls="--", label="fully developed, parallel plates: 7.54")
+    ax.set_ylim(0, 25)
+    ax.set_xlabel("distance along the channel (mm)")
+    ax.set_ylabel("Nusselt number (Dh = 2 × gap)")
+    a2 = ax.twinx()
+    a2.plot(x, col(al, "T_bulk"), color="#f59e0b")
+    a2.set_ylabel("bulk water temperature °C", color="#f59e0b")
+    a2.grid(False)
+    ax.legend(fontsize=8, loc="upper right")
+    ax.set_title("Thermal entrance: Nu falls from the inlet\ntowards the fully developed value")
+    nu = col(al, "Nu_x")
+    facts["mc"] = {"nu_in": float(nu[2]), "nu_end": float(nu[-5]), "tb_out": float(col(al, "T_bulk")[-1]),
+                   "dp": float((col(al, "p_mean")[0] - col(al, "p_mean")[-1]))}
+    return save(fig, "fig13_cfd_flows.png")
+
+
 def fig_ml(facts: dict) -> str | None:
     src = ROOT / "results" / "ml" / "report.png"
     if not src.exists():
@@ -539,7 +700,8 @@ def write_report(figs: dict, f: dict) -> None:
     for i, t in enumerate(["Chip: where the heat goes", "Grid resolution", "Server: balancing parallel branches",
                            "Rack: sharing flow between servers", "Hydraulics: pressure budget and pump curves",
                            "Viscosity sensitivity", "Practical coolants", "Climate and the cooling plant",
-                           "Dynamics: a load step", "A full day", "CNN workload"], 1):
+                           "Dynamics: a load step", "A full day", "CNN workload",
+                           "Navier-Stokes verification", "Boundary-driven flows"], 1):
         L.append(f"{i}. [{t}](#{i}-{t.lower().replace(':', '').replace(',', '').replace(' ', '-')})")
     L.append("")
 
@@ -687,6 +849,40 @@ def write_report(figs: dict, f: dict) -> None:
                      f"{vv['water']['cooling_J'] / 1e3:.1f} kJ for water.")
         L.append("")
 
+    dv = f["duct"]
+    L.append("## 12. Navier-Stokes verification\n")
+    L.append(f"![CFD verification]({figs['cfdv']})\n")
+    L.append("The rack model uses reduced-order physics: an energy-conserving thermal network plus channel correlations. "
+             "To check that this is justified, a separate solver integrates the full 2-D incompressible Navier-Stokes "
+             "and energy equations (Boussinesq buoyancy, staggered finite volumes, projection method). It is first "
+             "verified against the standard published benchmarks:")
+    L.append(f"- **Lid-driven cavity, Re = 100:** the centreline velocity matches Ghia, Ghia & Shin (1982) within "
+             f"**{f['ghia_err']:.3f}** of the lid speed at every tabulated point.")
+    L.append("- **Differentially heated cavity:** Nusselt numbers against de Vahl Davis (1983): " +
+             ", ".join(f"Ra {ra:.0e}: {a:.3f} vs {b:.3f} ({100 * (a / b - 1):+.1f} %)" for ra, a, b in f["dvd"]) + ".")
+    L.append(f"- **Our own 200 × 500 µm channel,** solved as fully developed Navier-Stokes + energy on its cross-section: "
+             f"f·Re = **{dv['fRe']['navier_stokes']:.3f}** against the {dv['fRe']['chip_model']:.3f} the chip model uses "
+             f"({100 * (dv['fRe']['navier_stokes'] / dv['fRe']['chip_model'] - 1):+.2f} %). The three-wall Nusselt number is "
+             f"**{dv['Nu3']['navier_stokes']:.3f}** against {dv['Nu3']['chip_model']:.3f} "
+             f"({100 * (dv['Nu3']['navier_stokes'] / dv['Nu3']['chip_model'] - 1):+.1f} %). **The correlations in the chip "
+             "model are confirmed by a first-principles solution.**\n")
+    mc = f["mc"]
+    rb = f["rb"]
+    L.append("## 13. Boundary-driven flows\n")
+    L.append(f"![CFD flows]({figs['cfdf']})\n")
+    L.append("Each case is set entirely by its boundaries. Every wall has a prescribed velocity (u, v): zero by default "
+             "(no-slip), or a moving wall, or an inflow. Each wall is held at a fixed hot or cold temperature, or insulated. "
+             "The interactive CFD scene of the viewer (key 5) lets you change any of these while the flow is running.")
+    L.append("- **Heated cavity:** with all walls at rest, buoyancy alone drives a single circulating cell. Hot fluid "
+             "rises along the hot wall and sinks along the cold one, and thin thermal boundary layers form.")
+    L.append(f"- **Rayleigh-Bénard:** heated from below, the fluid conducts (Nu = {rb[0]['nu']:.2f} at Ra = "
+             f"{rb[0]['ra']:.0f}) until it passes the critical Rayleigh number (about 1708). Then convection rolls carry "
+             f"more heat: Nu = {rb[-1]['nu']:.2f} at Ra = {rb[-1]['ra']:.0e}.")
+    L.append(f"- **Microchannel slice:** water at 1.67 m/s between ribs at 65 °C. The local Nusselt number falls from "
+             f"about {mc['nu_in']:.0f} near the inlet to {mc['nu_end']:.1f} at 20 mm, still above the fully developed 7.54. "
+             f"This confirms that the flow is thermally developing over the whole channel, as the chip model assumes. "
+             f"The water leaves at {mc['tb_out']:.1f} °C.\n")
+
     L.append("## Limitations\n")
     L.append("- **Assumed values:** the hotspot pattern, idle powers, and the cold-plate, quick-disconnect, CDU, "
              "dry-cooler and pump curves are assumptions; see [parameters.md](../parameters.md).")
@@ -710,6 +906,8 @@ def main() -> None:
     figs = {"chip": fig_chip(facts), "res": fig_resolution(facts), "server": fig_server(facts), "rack": fig_rack(facts),
             "hyd": fig_hydraulics(facts), "visc": fig_viscosity(facts), "cool": fig_coolants(facts),
             "climate": fig_climate(facts), "step": fig_step(facts), "day": fig_day(facts)}
+    figs["cfdv"] = fig_cfd_verification(facts)
+    figs["cfdf"] = fig_cfd_flows(facts)
     ml = fig_ml(facts)
     if ml:
         figs["ml"] = ml

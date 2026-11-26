@@ -12,6 +12,8 @@
 //
 // Common: --viscosity X (viscosity multiplier), --level chip|server|rack (overrides the config).
 #include "Units.hpp"
+#include "cfd/DuctFlow.hpp"
+#include "cfd/Presets.hpp"
 #include "config/Config.hpp"
 
 #include <chrono>
@@ -902,6 +904,125 @@ int cmdCosim(const Args& a) {
     return 0;
 }
 
+// ---------------------------------------------------------------------------------------------------
+/// 2-D Navier-Stokes + energy cases with editable boundary conditions, plus first-principles checks.
+void writeCfdFields(const cfd::NavierStokes2D& s, const std::string& dir) {
+    std::filesystem::create_directories(dir);
+    auto f = openCsv(dir + "/fields.csv");
+    f << "i,j,x,y,u,v,p,T\n";
+    for (int j = 1; j <= s.ny(); ++j)
+        for (int i = 1; i <= s.nx(); ++i)
+            f << i << ',' << j << ',' << (i - 0.5) * s.dx() << ',' << (j - 0.5) * s.dy() << ',' << s.uc(i, j) << ','
+              << s.vc(i, j) << ',' << s.pc(i, j) << ',' << s.tc(i, j) << '\n';
+    auto g = openCsv(dir + "/streamfunction.csv");
+    g << "i,j,x,y,psi\n";
+    const auto psi = s.streamFunction();
+    for (int j = 0; j <= s.ny(); ++j)
+        for (int i = 0; i <= s.nx(); ++i) g << i << ',' << j << ',' << i * s.dx() << ',' << j * s.dy() << ',' << psi[i * (s.ny() + 1) + j] << '\n';
+}
+
+int cmdCfd(const Args& a) {
+    const std::string name = a.get("case", "heated-cavity");
+    const std::string out = a.get("out", "results/cfd/" + name);
+    if (name == "duct") {
+        const double w = a.num("width", 200e-6), h = a.num("height", 500e-6);
+        const int n = static_cast<int>(a.num("n", 64));
+        const cfd::DuctResult r = cfd::solveRectDuct(w, h, n);
+        const double al = std::min(w, h) / std::max(w, h);
+        std::printf("Fully developed Navier-Stokes + energy in a %.0f x %.0f um duct (grid %d x %d):\n", w * 1e6, h * 1e6, r.nx, r.ny);
+        std::printf("  Fanning f*Re        %.4f   (Shah & London fit used by the chip model: %.4f)\n", r.fRe, RectChannel::fanningFRe(al));
+        std::printf("  Nu, H1, 3 walls     %.4f   (chip model: %.4f)\n", r.nuH1ThreeWalls, RectChannel::nu3WallFullyDeveloped(w / h));
+        std::printf("  Nu, H1, 4 walls     %.4f\n", r.nuH1FourWalls);
+        std::printf("  w_max / w_mean      %.4f\n", r.maxOverMean);
+        std::filesystem::create_directories(out);
+        auto f = openCsv(out + "/duct.csv");
+        f << "i,j,x_um,y_um,w_over_mean,theta3\n";
+        for (int j = 0; j < r.ny; ++j)
+            for (int i = 0; i < r.nx; ++i)
+                f << i << ',' << j << ',' << (i + 0.5) * w / r.nx * 1e6 << ',' << (j + 0.5) * h / r.ny * 1e6 << ','
+                  << r.w[j * r.nx + i] << ',' << r.theta[j * r.nx + i] << '\n';
+        auto g = openCsv(out + "/duct_summary.csv");
+        g << "quantity,navier_stokes,chip_model\n" << "fRe," << r.fRe << ',' << RectChannel::fanningFRe(al) << '\n'
+          << "Nu3," << r.nuH1ThreeWalls << ',' << RectChannel::nu3WallFullyDeveloped(w / h) << '\n'
+          << "Nu4," << r.nuH1FourWalls << ",\n";
+        std::printf("wrote %s/duct.csv\n", out.c_str());
+        return 0;
+    }
+    cfd::Case c = cfd::makeCase(name, a.num("value", -1.0), static_cast<int>(a.num("n", -1)));
+    cfd::Params& p = c.params;
+    // Per-wall overrides: --left-u 0.5 --top-T 1 --bottom-q 100 --right-outflow --left-insulated ...
+    const char* sideNames[4] = {"left", "right", "bottom", "top"};
+    cfd::Side* sides[4] = {&p.left, &p.right, &p.bottom, &p.top};
+    for (int k = 0; k < 4; ++k) {
+        const std::string sn = sideNames[k];
+        cfd::Side& sd = *sides[k];
+        if (a.has(sn + "-u")) sd.u = a.num(sn + "-u", 0.0);
+        if (a.has(sn + "-v")) sd.v = a.num(sn + "-v", 0.0);
+        if (a.has(sn + "-T")) { sd.thermal = cfd::ThermalBC::FixedTemperature; sd.T = a.num(sn + "-T", 0.0); }
+        if (a.has(sn + "-q")) { sd.thermal = cfd::ThermalBC::HeatFlux; sd.q = a.num(sn + "-q", 0.0); }
+        if (a.has(sn + "-insulated")) { sd.thermal = cfd::ThermalBC::HeatFlux; sd.q = 0.0; }
+        if (a.has(sn + "-outflow")) sd.velocity = cfd::VelocityBC::Outflow;
+        if (a.has(sn + "-wall")) sd.velocity = cfd::VelocityBC::Wall;
+    }
+    cfd::NavierStokes2D s(p);
+    if (a.has("seed")) {
+        // Break the symmetry of an unstable rest state (e.g. Rayleigh-Benard): warm the left wall briefly.
+        const cfd::Side orig = s.params().left;
+        cfd::Side warm = orig;
+        warm.thermal = cfd::ThermalBC::FixedTemperature;
+        warm.T = c.tCold + 0.6 * (c.tHot - c.tCold);
+        s.setSide(0, warm);
+        s.runUntil(a.num("seed", 0.2) * c.timeScale);
+        s.setSide(0, orig);
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    bool steady = false;
+    if (a.has("time")) s.runUntil(a.num("time", 1.0));
+    else steady = s.runToSteady(a.num("tol", 1e-5), c.timeScale, static_cast<int>(a.num("max-steps", 2000000)));
+    const double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    std::printf("%s (%s)\n%s\n", c.name.c_str(), c.reynoldsNote.c_str(), c.description.c_str());
+    std::printf("grid %d x %d, simulated %.4g s in %ld steps (%s, %.1f s wall), last dt %.3g s\n", s.nx(), s.ny(), s.time(),
+                s.steps(), a.has("time") ? "fixed time" : (steady ? "steady" : "NOT converged"), secs, s.lastDt());
+    std::printf("max speed %.4g m/s, max |div u| %.2e 1/s, kinetic energy %.4g\n", s.maxSpeed(), s.maxDivergence(), s.kineticEnergy());
+    for (int k = 0; k < 4; ++k) {
+        const cfd::Side& sd = *sides[k];
+        std::printf("  %-6s %s u=%.4g v=%.4g, %s, heat into fluid %.5g W/m2\n", sideNames[k],
+                    sd.velocity == cfd::VelocityBC::Outflow ? "outflow" : "wall/inflow", sd.u, sd.v,
+                    sd.thermal == cfd::ThermalBC::FixedTemperature ? ("T = " + std::to_string(sd.T).substr(0, 6)).c_str()
+                                                                  : ("q = " + std::to_string(sd.q).substr(0, 6)).c_str(),
+                    s.wallHeatFlux(k));
+    }
+    if (name == "heated-cavity")
+        std::printf("Nusselt number: hot wall %.4f, cold wall %.4f (de Vahl Davis 1983: 1.118 / 2.243 / 4.519 / 8.800 at Ra 1e3..1e6)\n",
+                    s.wallHeatFlux(0) * p.lx / (p.k * (p.left.T - p.right.T)), -s.wallHeatFlux(1) * p.lx / (p.k * (p.left.T - p.right.T)));
+    if (name == "rayleigh-benard")
+        std::printf("Nusselt number (floor) %.4f  (1.0 = pure conduction; convection above Ra ~ 1708)\n",
+                    s.wallHeatFlux(2) * p.ly / (p.k * (p.bottom.T - p.top.T)));
+    writeCfdFields(s, out);
+    if (name == "microchannel" || name == "poiseuille") {
+        // Developing flow along x: pressure, bulk temperature and local Nusselt number on the hot walls.
+        auto f = openCsv(out + "/along_flow.csv");
+        f << "x,p_mean,T_bulk,q_wall,Nu_x,x_star\n";
+        const double dh = 2.0 * p.ly, um = c.velocityScale > 0 ? p.left.u : 1.0;
+        const double tw = p.bottom.T;
+        for (int i = 1; i <= s.nx(); ++i) {
+            const double tb = s.bulkTemperatureColumn(i);
+            const double q = -p.k * (-8.0 * tw + 9.0 * s.tc(i, 1) - s.tc(i, 2)) / (3.0 * s.dy());
+            const double nu = std::abs(tw - tb) > 1e-9 ? q * dh / (p.k * (tw - tb)) : 0.0;
+            const double x = (i - 0.5) * s.dx();
+            f << x << ',' << s.meanPressureColumn(i) << ',' << tb << ',' << q << ',' << nu << ','
+              << x / (dh * (um * dh / p.nu) * (p.nu / p.alpha)) << '\n';
+        }
+        const int i1 = s.nx() / 4, i2 = 3 * s.nx() / 4;
+        const double dpdx = (s.meanPressureColumn(i2) - s.meanPressureColumn(i1)) / ((i2 - i1) * s.dx());
+        std::printf("pressure gradient (middle half) %.5g Pa/m per unit density; fully developed plates: %.5g\n", dpdx,
+                    -12.0 * p.nu * um / (p.ly * p.ly));
+        std::printf("bulk temperature: inlet %.3f, outlet %.3f\n", s.bulkTemperatureColumn(1), s.bulkTemperatureColumn(s.nx()));
+    }
+    std::printf("wrote %s/fields.csv and streamfunction.csv\n", out.c_str());
+    return 0;
+}
+
 int usage() {
     std::printf(
         "mfsim - microfluidic cooling data-center simulation (headless)\n\n"
@@ -914,6 +1035,9 @@ int usage() {
         "  mfsim climate-sweep   [--config F] [--temps 0,10,20,30,40]\n"
         "  mfsim coolant-compare [--config F] [--level rack|plant] [--coolants water,PG25,PG40,EG25]\n"
         "  mfsim hydraulics      [--config F] [--out dir]            loop pressure budget, pump/system curves\n"
+        "  mfsim cfd             --case lid-cavity|heated-cavity|rayleigh-benard|mixed-convection|microchannel|\n"
+        "                               poiseuille|duct [--value Re/Ra/velocity] [--n cells] [--time t | --tol 1e-5]\n"
+        "                        [--left-u X --left-v X --left-T X --left-q X --left-outflow --left-insulated ...]\n"
         "  mfsim cosim           [--config F] [--trace results/ml/activity_trace.csv] [--coolants water,PG25]\n"
         "                        [--lead 60] [--tail 300] [--time-scale 1] [--job-servers 8] [--plant on|off]\n\n"
         "Levels: chip | server | rack (fixed 35 C supply) | plant (rack + CDU + dry cooler + trim chiller)\n"
@@ -937,6 +1061,7 @@ int main(int argc, char** argv) {
         if (a.cmd == "coolant-compare") return cmdCoolantCompare(a);
         if (a.cmd == "cosim") return cmdCosim(a);
         if (a.cmd == "hydraulics") return cmdHydraulics(a);
+        if (a.cmd == "cfd") return cmdCfd(a);
     } catch (const std::exception& e) {
         std::fprintf(stderr, "error: %s\n", e.what());
         return 2;

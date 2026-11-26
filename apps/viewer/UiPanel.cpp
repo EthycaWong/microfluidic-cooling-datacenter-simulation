@@ -91,9 +91,19 @@ void drawControlPanel(App& app, Rectangle a) {
 
     // ---- view ----
     int scene = static_cast<int>(s.scene);
-    GuiToggleGroup({x, y, (w - 12) / 4, 28}, "Rack;Server;Chip;Charts", &scene);
-    if (scene != static_cast<int>(s.scene)) { s.scene = static_cast<SceneId>(scene); frameScene(s); }
+    GuiToggleGroup({x, y, (w - 16) / 5, 28}, "Rack;Server;Chip;Charts;CFD", &scene);
+    if (scene != static_cast<int>(s.scene)) {
+        s.scene = static_cast<SceneId>(scene);
+        frameScene(s);
+        if (s.scene == SceneId::Cfd && !app.cfd.solver) cfdLoadCase(app.cfd, 1, -1);
+    }
     y += 36;
+    if (s.scene == SceneId::Cfd) {
+        drawCfdPanel(app.cfd, s, x, y, w);
+        drawText(s, "Key 5 = CFD. Walls default to u = v = 0 (no-slip);", x, a.y + a.height - 44, 13, kDim);
+        drawText(s, "pick a wall and change u, v, hot / cold / insulated.", x, a.y + a.height - 26, 13, kDim);
+        return;
+    }
     drawText(s, "Server", x, y + 4, 15, kDim);
     int srv = s.server;
     GuiToggleGroup({x + 60, y, (w - 60 - 14) / 8, 24}, "1;2;3;4;5;6;7;8", &srv);

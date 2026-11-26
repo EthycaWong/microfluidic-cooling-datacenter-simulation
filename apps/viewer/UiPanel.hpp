@@ -1,4 +1,5 @@
 #pragma once
+#include "CfdView.hpp"
 #include "Scenes.hpp"
 #include "workload/Workload.hpp"
 
@@ -15,6 +16,7 @@ struct App {
     std::string liveTrace = "results/ml/activity_live.csv";
     std::string replayTrace = "results/ml/activity_trace.csv";
     std::string jobMessage;
+    CfdApp cfd;                                    ///< 2-D Navier-Stokes scene
     ViewerState s;
     bool requestSteady = false;
     bool requestFrame = false;

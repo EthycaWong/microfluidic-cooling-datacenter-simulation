@@ -94,6 +94,7 @@ void frameScene(ViewerState& s) {
     case SceneId::Server: s.target = {0.04f, 0.02f, 0.02f}; s.distance = 1.45f; s.yaw = 0.55f; s.pitch = 0.80f; break;
     case SceneId::Chip: s.target = {0.05f, 0.18f, 0}; s.distance = 3.6f; s.yaw = 0.55f; s.pitch = 0.42f; break;
     case SceneId::Charts: break;
+    case SceneId::Cfd: break;
     }
 }
 

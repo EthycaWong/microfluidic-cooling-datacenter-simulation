@@ -41,6 +41,9 @@ add_library(mfcore STATIC
   src/core/system/DataCenter.cpp
   src/core/workload/Workload.cpp
   src/core/config/Config.cpp
+  src/core/cfd/NavierStokes2D.cpp
+  src/core/cfd/DuctFlow.cpp
+  src/core/cfd/Presets.cpp
 )
 target_include_directories(mfcore PUBLIC src/core)
 target_link_libraries(mfcore PUBLIC nlohmann_json::nlohmann_json)
@@ -75,6 +78,7 @@ if(MF_BUILD_VIEWER)
     apps/viewer/Scenes.cpp
     apps/viewer/UiPanel.cpp
     apps/viewer/Charts.cpp
+    apps/viewer/CfdView.cpp
     apps/viewer/raygui_impl.c
   )
   target_include_directories(mfsim_viewer PRIVATE apps/viewer ${raygui_SOURCE_DIR}/src ${raygui_SOURCE_DIR})
@@ -101,6 +105,7 @@ if(MF_BUILD_TESTS)
     tests/test_chip.cpp
     tests/test_system.cpp
     tests/test_plant.cpp
+    tests/test_cfd.cpp
   )
   target_include_directories(mfcore_tests PRIVATE ${doctest_SOURCE_DIR})
   target_link_libraries(mfcore_tests PRIVATE mfcore)

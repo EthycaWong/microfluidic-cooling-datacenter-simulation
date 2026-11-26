@@ -8,7 +8,7 @@
 
 namespace viewer {
 
-enum class SceneId { Rack = 0, Server = 1, Chip = 2, Charts = 3 };
+enum class SceneId { Rack = 0, Server = 1, Chip = 2, Charts = 3, Cfd = 4 };
 
 /// A text label anchored at a 3D point, drawn after the 3D pass.
 struct Label {

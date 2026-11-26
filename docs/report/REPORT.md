@@ -17,6 +17,8 @@ The model is described in the [README](../../README.md) and its inputs in [param
 9. [Dynamics: a load step](#9-dynamics-a-load-step)
 10. [A full day](#10-a-full-day)
 11. [CNN workload](#11-cnn-workload)
+12. [Navier-Stokes verification](#12-navier-stokes-verification)
+13. [Boundary-driven flows](#13-boundary-driven-flows)
 
 ## 1. Chip: where the heat goes
 
@@ -107,6 +109,24 @@ Peak temperature at 5×5: 80.12 °C, 10×10: 81.85 °C, 20×20: 82.64 °C, 40×4
 - **The job:** a PyTorch CNN trained on MNIST reaches **99.35 %** test accuracy, then reads 22923 digits on 716 scanned pages (99.2 % correct). Its measured device activity drives the rack; see [ml_workload.md](../ml_workload.md).
 - **Fixed 12 L/min:** the hottest chip reaches 79.9 °C with water and **87.4 °C with PG25**.
 - **Variable flow with load feedforward:** 83.2 °C and 81.9 °C. Cooling energy falls from 28.1 to 18.1 kJ for water.
+
+## 12. Navier-Stokes verification
+
+![CFD verification](fig12_cfd_verification.png)
+
+The rack model uses reduced-order physics: an energy-conserving thermal network plus channel correlations. To check that this is justified, a separate solver integrates the full 2-D incompressible Navier-Stokes and energy equations (Boussinesq buoyancy, staggered finite volumes, projection method). It is first verified against the standard published benchmarks:
+- **Lid-driven cavity, Re = 100:** the centreline velocity matches Ghia, Ghia & Shin (1982) within **0.005** of the lid speed at every tabulated point.
+- **Differentially heated cavity:** Nusselt numbers against de Vahl Davis (1983): Ra 1e+03: 1.118 vs 1.118 (+0.0 %), Ra 1e+04: 2.252 vs 2.243 (+0.4 %), Ra 1e+05: 4.575 vs 4.519 (+1.2 %).
+- **Our own 200 × 500 µm channel,** solved as fully developed Navier-Stokes + energy on its cross-section: f·Re = **16.359** against the 16.377 the chip model uses (-0.11 %). The three-wall Nusselt number is **4.925** against 4.893 (+0.6 %). **The correlations in the chip model are confirmed by a first-principles solution.**
+
+## 13. Boundary-driven flows
+
+![CFD flows](fig13_cfd_flows.png)
+
+Each case is set entirely by its boundaries. Every wall has a prescribed velocity (u, v): zero by default (no-slip), or a moving wall, or an inflow. Each wall is held at a fixed hot or cold temperature, or insulated. The interactive CFD scene of the viewer (key 5) lets you change any of these while the flow is running.
+- **Heated cavity:** with all walls at rest, buoyancy alone drives a single circulating cell. Hot fluid rises along the hot wall and sinks along the cold one, and thin thermal boundary layers form.
+- **Rayleigh-Bénard:** heated from below, the fluid conducts (Nu = 1.00 at Ra = 1000) until it passes the critical Rayleigh number (about 1708). Then convection rolls carry more heat: Nu = 3.91 at Ra = 1e+05.
+- **Microchannel slice:** water at 1.67 m/s between ribs at 65 °C. The local Nusselt number falls from about 71 near the inlet to 7.7 at 20 mm, still above the fully developed 7.54. This confirms that the flow is thermally developing over the whole channel, as the chip model assumes. The water leaves at 45.9 °C.
 
 ## Limitations
 
