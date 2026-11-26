@@ -1,6 +1,6 @@
 # Microfluidic cooling in a data center: simulation
 
-A physics-based C++ simulation, with a live 3D viewer, of a liquid-cooled 42U server rack and its cooling plant. It is built up from a single microchannel-cooled chip and driven by a real PyTorch machine-learning job.
+A physics-based C++ simulation, with a live 3D viewer, of a liquid-cooled 42U server rack and its cooling plant. It is built up from a single microchannel-cooled chip and driven by a real PyTorch machine-learning job. A 2-D Navier–Stokes + energy solver, with boundary-driven hot and cold walls, checks the fluid physics from first principles.
 
 **Research question.** Microfluidic cooling (coolant etched through the silicon, as Microsoft demonstrated) and closed-loop, non-evaporative coolant systems (as NVIDIA describes) both promise to cut cooling energy and water use. This project combines the two. It asks whether **coolant viscosity**, which makes fluid harder to push through tiny channels, limits those savings.
 
@@ -15,7 +15,7 @@ A physics-based C++ simulation, with a live 3D viewer, of a liquid-cooled 42U se
 | ![Heated cavity](docs/screenshots/cfd_heated-cavity.png) | ![Rayleigh-Benard](docs/screenshots/cfd_rayleigh-benard.png) | ![Microchannel](docs/screenshots/cfd_microchannel.png) |
 
 **Documents:**
-- **[Results report](docs/report/REPORT.md):** 11 figures with written analysis, regenerated from the simulation.
+- **[Results report](docs/report/REPORT.md):** 13 figures with written analysis, from chip to climate, the ML job and the Navier–Stokes checks, regenerated from the simulation.
 - **[Parameters and assumptions](docs/parameters.md):** every input, its source, and the hand calculations.
 - **[CNN workload](docs/ml_workload.md):** the PyTorch job and its co-simulation.
 - **[Navier–Stokes and energy equations](docs/cfd.md):** what is solved where, the 2-D solver, boundary conditions and benchmarks.
@@ -71,9 +71,10 @@ flowchart LR
     CDU -->|supply temperature| RK
     RK -->|branch flows| CH
     CH -->|"mu(T), rho(T)"| RK
+    NS["2-D Navier-Stokes + energy solver<br/>boundary-driven walls: u, v, hot / cold"] -.->|"verifies f·Re and Nu"| CH
 ```
 
-The physics lives in a headless library (`src/core`). Two programs use it: the `mfsim` command-line tool for experiments, and `mfsim_viewer` for live 3D. Everything is SI internally, and configs carry units in their key names.
+The dashed link is a check, not a runtime coupling: the CFD solver independently re-derives the channel friction and heat-transfer coefficients the chip grid uses. The physics lives in a headless library (`src/core`). Two programs use it: the `mfsim` command-line tool for experiments, and `mfsim_viewer` for live 3D. Everything is SI internally, and configs carry units in their key names.
 
 ### 2.2 Coolant properties
 
@@ -281,7 +282,7 @@ Common options: `--config F`, `--level`, `--coolant`, `--facility-coolant`, `--v
 .venv/bin/python analysis/make_report.py
 ```
 
-This reruns every experiment (about 11 minutes) and rewrites [docs/report/REPORT.md](docs/report/REPORT.md) and its figures. `--no-sim` only redraws from saved data.
+This reruns every experiment, including the Navier–Stokes cases (about 13 minutes), and rewrites [docs/report/REPORT.md](docs/report/REPORT.md) and its figures. `--no-sim` only redraws from saved data.
 
 ### Machine-learning job
 
